@@ -1,0 +1,1095 @@
+﻿#Requires AutoHotkey v2.0
+#SingleInstance Force
+; M0MENT4M loader: pick a game, the newest macro is downloaded from GitHub and started.
+
+Global NLToken := 0, NLG := 0, NLFmt := 0, NLFmtW := 0, NLAlphaPage := 1.0, NLStyle := "sp"
+Global NLBrushCache := Map(), NLPenCache := Map(), NLPathCache := Map(), NLBrushOld := Map(), NLPenOld := Map(), NLPathOld := Map()
+Global NLFontUI := 0, NLFontSm := 0, NLFontTitle := 0, NLFontB := 0, NLFontH := 0, NLFontLogo := 0, NLFontIcon := 0
+Global CompBubbleUntil := 0, CompFollow := true, CompScale := 100, CompGui := 0
+
+CoordMode("Mouse", "Screen")          ; (mouse positions on the whole screen, not inside the active window)
+Global AppDir := A_ScriptDir
+Global PrefFile := AppDir "\M0MENT4M\configs\loader.ini"
+Global Dark := true
+try Dark := IniRead(PrefFile, "loader", "dark", "1") = "1"
+
+; the loader updates 
+Global LOADER_VER := 1
+Global REPO := "https://raw.githubusercontent.com/eintoaster/m0ment4m/refs/heads/main/"
+Global LOADER_URL := REPO "M0MENT4M%20Loader.ahk", GAMES_URL := REPO "games.txt"
+Global SrcDir := ""                    ; (test only, with debug.on: /src=<folder> reads the "GitHub" files from that folder)
+
+; the macro is downloaded every time (always the newest); the last download is kept for when there is no internet
+; the list of games comes from games.txt on GitHub (one line per game: name|subtitle|raw link), this one is only the fallback
+Global GAMES := [{name: "Evade", sub: "Movement Macro", url: REPO "M0MENT4M%202.0.ahk"}]
+Global GamesCache := AppDir "\M0MENT4M\tools\games.cache"
+Global SplashOn := true, SplashT0 := A_TickCount, SPLASH_MS := 3200, SplashEnd := 0
+Global Sel := 1, StatusTxt := "", StatusCol := 0, BtnTxt := "launch", Busy := false
+Global Upd := {loader: 0, games: 0, state: "", until: 0, updated: false}   ; (the update check while the loading screen plays)
+
+Global LW := 820, LH := 520, ElfX := 40, ElfY := 66, ElfS := 1.12
+Global LG, LDC := 0, LBmp := 0, Hits := [], HitsNext := [], HoverId := "", Anim := Map(), T0 := A_TickCount, ThemeT := 1.0
+Global AUR := [[16, 185, 129], [34, 211, 238], [99, 102, 241], [168, 85, 247]]
+
+NLGdipInit()
+Global FTitle := NLMakeFont("Segoe UI Black", 22, 0)
+Global FBig := NLMakeFont("Segoe UI", 30, 1)
+Global FMid := NLMakeFont("Segoe UI", 17, 1)
+Global FTxt := NLMakeFont("Segoe UI", 13, 0)
+Global FSmall := NLMakeFont("Segoe UI", 11, 1)
+Global FBtn := NLMakeFont("Segoe UI", 15, 1)
+Global FIcon := NLMakeFont("Segoe UI Symbol", 17, 0)
+
+LG := Gui("-Caption +ToolWindow +AlwaysOnTop +E0x80000 -DPIScale", "M0MENT4M Loader")
+LG.Show("w" LW " h" LH " Hide")
+MakeSurface()
+class EyeHost {                                   ; Elfaria's eyes follow the mouse: tell her where she sits on screen
+    GetPos(&x, &y, &w := 0, &h := 0) {
+        global LG, ElfX, ElfY
+        LG.GetPos(&gx, &gy)
+        x := gx + ElfX, y := gy + ElfY
+    }
+}
+CompGui := EyeHost()
+Global WinA := 0
+LG.Show("NA")
+WinActivate("ahk_id " LG.Hwnd)
+SetTimer(Frame, 16)
+OnMessage(0x0201, OnDown)
+Global QuickLaunch := false
+for a in A_Args {
+    if (a = "/launch")
+        QuickLaunch := true
+    else if (a = "/updated")
+        Upd.updated := true
+    else if (SubStr(a, 1, 5) = "/src=" && FileExist(A_ScriptDir "\debug.on"))
+        SrcDir := SubStr(a, 6)
+}
+LoadGames(FileText(GamesCache))                   ; the last known list right away (works without internet)
+try {
+    last := IniRead(PrefFile, "loader", "game", "")
+    for i, gm in GAMES
+        if (gm.name = last)
+            Sel := i
+}
+if (QuickLaunch) {                                ; (a reload from the macro: no loading screen, no update check)
+    SplashOn := false
+    SetTimer(() => Launch(GAMES[Sel]), -50)
+} else
+    UpdStart()
+
+NLGdipInit()
+{
+    global NLToken, NLFmt, NLFmtW
+    if (NLToken)
+        return
+    DllCall("LoadLibrary", "Str", "gdiplus")
+    si := Buffer(24, 0)
+    NumPut("UInt", 1, si, 0)
+    DllCall("gdiplus\GdiplusStartup", "Ptr*", &NLToken, "Ptr", si, "Ptr", 0)
+    DllCall("gdiplus\GdipCreateStringFormat", "Int", 0x4000, "Int", 0, "Ptr*", &NLFmt)
+    DllCall("gdiplus\GdipCreateStringFormat", "Int", 0, "Int", 0, "Ptr*", &NLFmtW)
+}
+
+; ---------------- drawing ----------------
+Pal(k)
+{
+    global Dark
+    static d := Map("bg", [16, 18, 23], "edge", [255, 255, 255, 14], "text", [242, 244, 247], "muted", [140, 147, 160], "card", [26, 29, 36], "cardSel", [30, 38, 52], "line", [255, 255, 255, 18])
+    static l := Map("bg", [255, 255, 255], "edge", [0, 0, 0, 22], "text", [21, 23, 28], "muted", [118, 124, 136], "card", [245, 246, 248], "cardSel", [234, 243, 255], "line", [0, 0, 0, 22])
+    return Dark ? d[k] : l[k]
+}
+P(k, a := -1)
+{
+    c := Pal(k)
+    return NLC(c[1], c[2], c[3], a >= 0 ? a : (c.Length > 3 ? c[4] : 255))
+}
+
+Lerp(id, target, sp)
+{
+    global Anim
+    v := Anim.Has(id) ? Anim[id] : target
+    v += (target - v) * sp
+    Anim[id] := v
+    return v
+}
+
+AddHit(id, x, y, w, h) => HitsNext.Push({id: id, x: x, y: y, w: w, h: h})
+
+Frame()
+{
+    global LG, LDC, LW, LH, NLG, NLAlphaPage, Hits, HitsNext, HoverId, WinA, T0, StatusTxt, StatusCol, BtnTxt, Sel, GAMES, Dark, ElfX, ElfY, ElfS, AUR
+    global FTitle, FBig, FMid, FTxt, FSmall, FBtn, FIcon, SplashOn
+    ; hover
+    MouseGetPos(&mx, &my, &mw)
+    LG.GetPos(&gx, &gy)
+    mx -= gx, my -= gy
+    nid := ""
+    if (mw = LG.Hwnd)
+        for h in Hits
+            if (mx >= h.x && mx < h.x + h.w && my >= h.y && my < h.y + h.h)
+                nid := h.id
+    HoverId := nid
+    HitsNext := []
+    if (SplashOn) {
+        Splash()
+        return
+    }
+    t := (A_TickCount - T0) / 1000
+    WinA := Min(1.0, WinA + 0.09)
+    NLAlphaPage := 1.0
+    DllCall("gdiplus\GdipGraphicsClear", "Ptr", NLG, "UInt", 0)
+    ; window
+    NLRR(0, 0, LW, LH, 22, P("bg"))
+    NLRRLine(0, 0, LW, LH, 22, P("edge"))
+    ; soft glow behind Elfaria
+    gc := SPStopsSample(AUR, t * 0.05)
+    Loop 6
+        NLDisc(ElfX + 135, ElfY + 250, 190 - A_Index * 22, NLC(gc[1], gc[2], gc[3], Dark ? 7 : 9))
+    ; Elfaria (the companion, drawn live)
+    DllCall("gdiplus\GdipTranslateWorldTransform", "Ptr", NLG, "Float", ElfX, "Float", ElfY, "Int", 0)
+    DllCall("gdiplus\GdipScaleWorldTransform", "Ptr", NLG, "Float", ElfS, "Float", ElfS, "Int", 0)
+    CompDrawElf(t)
+    DllCall("gdiplus\GdipResetWorldTransform", "Ptr", NLG)
+    ; title: M0MENT4M with a moving gradient on every letter
+    x := 28
+    Loop Parse, "M0MENT4M" {
+        c := SPStopsSample(AUR, t * 0.18 - (A_Index - 1) * 0.07)
+        NLText(A_LoopField, x, 18, NLC(c[1], c[2], c[3]), FTitle, 40, 34, 0, 1)
+        x += NLTextW(A_LoopField, FTitle) * 0.72 + 1
+    }
+    NLText("loader", x + 8, 24, P("muted"), FSmall, 80, 24, 0, 1)
+    ; theme + close
+    hv := Lerp("th", HoverId = "theme" ? 1 : 0, 0.25)
+    NLRR(LW - 98, 18, 34, 34, 10, P("card", Round(255 * hv)))
+    NLText(Dark ? Chr(0x263E) : Chr(0x2600), LW - 98, 18, hv > 0.5 ? P("text") : P("muted"), FIcon, 34, 34, 1, 1)
+    AddHit("theme", LW - 98, 18, 34, 34)
+    hc := Lerp("cl", HoverId = "close" ? 1 : 0, 0.25)
+    NLRR(LW - 58, 18, 34, 34, 10, NLC(229, 72, 77, Round(220 * hc)))
+    NLText(Chr(0x2715), LW - 58, 18, hc > 0.5 ? NLC(255, 255, 255) : P("muted"), FIcon, 34, 34, 1, 1)
+    AddHit("close", LW - 58, 18, 34, 34)
+    ; right column
+    rx := 440, rw := LW - 46 - rx
+    ti := Min(1.0, t / 0.6), e := 1 - (1 - ti) ** 3
+    NLAlphaPage := e
+    NLText("welcome back", rx, 108 + (1 - e) * 14, P("text"), FBig, rw, 46, 2, 1)
+    NLText("choose your roblox game", rx, 154 + (1 - e) * 10, P("muted"), FTxt, rw, 22, 2, 1)
+    NLText("GAMES", rx, 206, P("muted"), FSmall, rw, 18, 2, 1)
+    n := GAMES.Length                                                     ; (more games: smaller cards so everything still fits)
+    step := n <= 2 ? 70 : Max(36, Floor(156 / n)), ch := step - 8
+    for i, gm in GAMES {
+        y := 232 + (i - 1) * step, my := y + ch / 2
+        on := (i = Sel)
+        hg := Lerp("g" i, HoverId = "g" i ? 1 : 0, 0.25)
+        NLRR(rx, y, rw, ch, 14, on ? P("cardSel") : P("card"))
+        if (on)
+            SPGradBorder(rx, y, rw, ch, 14, AUR, t * 0.3, 1.6)
+        else if (hg > 0.02)
+            NLRRLine(rx, y, rw, ch, 14, P("line"))
+        c := SPStopsSample(AUR, t * 0.2)
+        NLDisc(rx + 26, my, 9, P("bg"))
+        NLRRLine(rx + 17, my - 9, 18, 18, 9, on ? NLC(c[1], c[2], c[3]) : P("muted"))
+        if (on)
+            NLDisc(rx + 26, my, 4.5 + 0.8 * Sin(t * 3), NLC(c[1], c[2], c[3]))
+        if (ch >= 44) {
+            NLText(gm.name, rx + 50, my - 22, P("text"), FMid, rw - 60, 26, 0, 1)
+            NLText(gm.sub, rx + 50, my + 3, P("muted"), FTxt, rw - 60, 20, 0, 1)
+        } else {                                                          ; (one line: name left, subtitle right)
+            NLText(gm.name, rx + 50, my - 13, P("text"), FMid, rw - 60, 26, 0, 1)
+            NLText(gm.sub, rx + 50, my - 10, P("muted"), FTxt, rw - 66, 20, 2, 1)
+        }
+        AddHit("g" i, rx, y, rw, ch)
+    }
+    by := 232 + n * step + 22
+    NLRR(rx, by - 12, rw, 1, 0, P("line"))
+    hb := Lerp("bt", HoverId = "go" ? 1 : 0, 0.22)
+    pr := (HoverId = "go" && GetKeyState("LButton", "P")) ? 2 : 0
+    SPGradFill(rx, by + pr, rw, 50, 25, AUR, t * 0.25, 1.0)
+    NLRR(rx, by + pr, rw, 50, 25, NLC(255, 255, 255, Round(40 * hb)))
+    NLText(BtnTxt, rx, by + pr, NLC(255, 255, 255), FBtn, rw, 50, 1, 1)
+    AddHit("go", rx, by, rw, 50)
+    if (StatusTxt != "")
+        NLText(StatusTxt, rx, by + 60, StatusCol ? StatusCol : P("muted"), FTxt, rw, 40, 1, 0, true)
+    NLText("Macro loader", 28, LH - 34, P("muted"), FTxt, 300, 20, 0, 1)
+    NLAlphaPage := 1.0
+    Hits := HitsNext
+    Present(Round(255 * WinA))
+}
+
+; ---------------- loading screen (anime style, different from the macro's) ----------------
+Global FSplash := 0, FSplashJ := 0, FSplashS := 0, Petals := []
+SplashInit()
+{
+    global FSplash, FSplashJ, FSplashS, Petals, LW, LH
+    FSplash := NLMakeFont("Segoe UI Black", 44, 0)
+    FSplashJ := NLMakeFont("Yu Gothic UI", 15, 1)
+    FSplashS := NLMakeFont("Segoe UI", 12, 1)
+    Loop 34
+        Petals.Push({x: Random(0, LW), y: Random(-LH, LH), s: Random(5, 11), sp: Random(28, 70), sw: Random(0, 628) / 100, rot: Random(0, 360), vr: Random(-90, 90)})
+}
+
+Petal(x, y, s, rot, argb)
+{
+    global NLG
+    DllCall("gdiplus\GdipTranslateWorldTransform", "Ptr", NLG, "Float", x, "Float", y, "Int", 1)
+    DllCall("gdiplus\GdipRotateWorldTransform", "Ptr", NLG, "Float", rot, "Int", 1)
+    HWOval(0, 0, s, s * 0.55, argb)
+    DllCall("gdiplus\GdipResetWorldTransform", "Ptr", NLG)
+}
+
+Splash()
+{
+    global LW, LH, NLG, NLAlphaPage, WinA, SplashT0, SPLASH_MS, SplashOn, T0, AUR, Petals, FSplash, FSplashJ, FSplashS, CompBubbleUntil, SplashEnd, LG
+    static SW := 440, SH := 260, placed := false
+    if (!FSplash) {
+        SplashInit()
+        FSplash := NLMakeFont("Segoe UI Black", 30, 0)
+    }
+    if (!placed) {                                                          ; a small card in the middle of the screen
+        placed := true
+        LG.Move((A_ScreenWidth - SW) // 2, (A_ScreenHeight - SH) // 2, SW, SH)
+    }
+    global Upd
+    static tStart := A_TickCount
+    UpdPoll()
+    ms := A_TickCount - SplashT0
+    if (Upd.state != "" && ms > SPLASH_MS * 0.9)                         ; (waits for the update check, a few seconds at most)
+        SplashT0 := A_TickCount - SPLASH_MS * 0.9, ms := SPLASH_MS * 0.9
+    t := (A_TickCount - tStart) / 1000
+    u := Min(1.0, ms / SPLASH_MS)
+    WinA := Min(1.0, WinA + 0.08)
+    NLAlphaPage := 1.0
+    DllCall("gdiplus\GdipGraphicsClear", "Ptr", NLG, "UInt", 0)
+    NLRR(0, 0, SW, SH, 18, NLC(12, 12, 28))
+    c1 := SPStopsSample(AUR, t * 0.08), c2 := SPStopsSample(AUR, t * 0.08 + 0.5)
+    Loop 6 {
+        NLDisc(120 + 20 * Sin(t * 0.6), SH * 0.58, 190 - A_Index * 26, NLC(c1[1], c1[2], c1[3], 9))
+        NLDisc(SW * 0.8 + 15 * Cos(t * 0.5), SH * 0.3, 150 - A_Index * 20, NLC(c2[1], c2[2], c2[3], 8))
+    }
+    cx := 112, cy := SH * 0.58
+    Loop 22 {
+        a := A_Index / 22 * 6.2832 + t * 0.15
+        r0 := 92 + 10 * Sin(t * 3 + A_Index)
+        NLLineW(cx + Cos(a) * r0, cy + Sin(a) * r0, cx + Cos(a) * (r0 + 70), cy + Sin(a) * (r0 + 70), NLC(255, 255, 255, 10), 1.5)
+    }
+    for p in Petals {
+        y := Mod(p.y + p.sp * t + SH * 4, SH + 30) - 15
+        x := Mod(p.x, SW) + 12 * Sin(t * 1.2 + p.sw)
+        Petal(x, y, p.s * 0.7, p.rot + p.vr * t, NLC(255, 182, 213, 160))
+    }
+    Loop 9 {
+        k := A_Index
+        tw := 0.5 + 0.5 * Sin(t * 4 + k * 1.7)
+        NLText(Chr(0x2726), Mod(k * 137, SW), Mod(k * 71, SH), NLC(255, 255, 255, Round(150 * tw)), FSplashS, 18, 18, 1, 1)
+    }
+    ein := Min(1.0, ms / 650)
+    pop := 1 + 2.70158 * (ein - 1) ** 3 + 1.70158 * (ein - 1) ** 2
+    if (ms > 400 && !CompBubbleUntil)
+        CompBubbleUntil := A_TickCount + 1600
+    es := 0.62 * pop
+    DllCall("gdiplus\GdipTranslateWorldTransform", "Ptr", NLG, "Float", cx - 120 * es, "Float", cy - 205 * es + (1 - pop) * 24, "Int", 0)
+    DllCall("gdiplus\GdipScaleWorldTransform", "Ptr", NLG, "Float", es, "Float", es, "Int", 0)
+    CompDrawElf(t)
+    DllCall("gdiplus\GdipResetWorldTransform", "Ptr", NLG)
+    ba := Min(1.0, Max(0, (ms - 500) / 300))
+    if (ba > 0) {
+        NLAlphaPage := ba
+        bx := cx + 34, by := cy - 128
+        NLRR(bx, by, 118, 28, 14, NLC(255, 255, 255, 235))
+        HWPoly([bx + 14, by + 25, bx + 28, by + 25, bx + 8, by + 38], NLC(255, 255, 255, 235))
+        NLText("hii~!", bx, by, NLC(40, 44, 80), FSplashS, 118, 28, 1, 1)
+        NLAlphaPage := 1.0
+    }
+    word := "LOADING", x := 232
+    Loop Parse, word {
+        k := A_Index
+        jy := -7 * Max(0, Sin(t * 6 - k * 0.55)) ** 2
+        c := SPStopsSample(AUR, t * 0.25 - k * 0.08)
+        NLText(A_LoopField, x + 2, 86 + jy + 2, NLC(0, 0, 0, 90), FSplash, 44, 44, 0, 1)
+        NLText(A_LoopField, x, 86 + jy, NLC(c[1], c[2], c[3]), FSplash, 44, 44, 0, 1)
+        x += NLTextW(A_LoopField, FSplash) * 0.74 + 1
+    }
+    NLText("M0MENT4M LOADER", 234, 128, NLC(220, 214, 255, 190), FSplashS, 190, 20, 0, 1)
+    px := 234, pw := SW - 234 - 26, py := 160
+    NLRR(px, py, pw, 8, 4, NLC(255, 255, 255, 28))
+    pe := 1 - (1 - u) ** 2
+    SPGradFill(px, py, Max(8, pw * pe), 8, 4, AUR, t * 0.4, 1.0)
+    NLDisc(px + pw * pe, py + 4, 5.5, NLC(255, 255, 255, 230))
+    steps := ["waking Elfaria up", "polishing the menu", "getting ready", "almost there"]
+    step := steps[Min(4, Floor(u * 4) + 1)] "..."
+    if (Upd.state = "apply")
+        step := "updating loader..."
+    else if (Upd.updated && ms < 1800)
+        step := "loader updated!"
+    else if (Upd.state = "check" && (ms < 700 || u >= 0.85))
+        step := "checking for updates..."
+    NLText(step, px, py + 14, NLC(200, 205, 230, 210), FSplashS, pw - 36, 20, 0, 1)
+    NLText(Round(pe * 100) "%", px, py + 14, NLC(255, 255, 255, 230), FSplashS, pw, 20, 2, 1)
+    NLRRLine(0, 0, SW, SH, 18, NLC(255, 255, 255, 18))
+    if (ms >= SPLASH_MS) {
+        if (!SplashEnd)
+            SplashEnd := A_TickCount
+        f := Min(1.0, (A_TickCount - SplashEnd) / 220)
+        NLRR(0, 0, SW, SH, 18, NLC(255, 255, 255, Round(200 * f)))
+        if (f >= 1) {
+            SplashOn := false
+            T0 := A_TickCount
+            CompBubbleUntil := 0
+            WinA := 0.0
+            LG.Move((A_ScreenWidth - LW) // 2, (A_ScreenHeight - LH) // 2, LW, LH)    ; now the full loader
+        }
+    }
+    Present(Round(255 * WinA), SW, SH)
+}
+
+MakeSurface()
+{
+    global LDC, LBmp, NLG, LW, LH
+    LDC := DllCall("CreateCompatibleDC", "Ptr", 0, "Ptr")
+    bi := Buffer(40, 0)
+    NumPut("Int", 40, bi, 0), NumPut("Int", LW, bi, 4), NumPut("Int", -LH, bi, 8), NumPut("Short", 1, bi, 12), NumPut("Short", 32, bi, 14)
+    bits := 0
+    LBmp := DllCall("CreateDIBSection", "Ptr", LDC, "Ptr", bi, "UInt", 0, "Ptr*", &bits, "Ptr", 0, "UInt", 0, "Ptr")
+    DllCall("SelectObject", "Ptr", LDC, "Ptr", LBmp)
+    DllCall("gdiplus\GdipCreateFromHDC", "Ptr", LDC, "Ptr*", &NLG)
+    DllCall("gdiplus\GdipSetSmoothingMode", "Ptr", NLG, "Int", 4)
+    DllCall("gdiplus\GdipSetTextRenderingHint", "Ptr", NLG, "Int", 4)
+}
+
+Present(alpha, w := 0, h := 0)
+{
+    global LG, LDC, LW, LH
+    sz := Buffer(8, 0), NumPut("Int", w ? w : LW, sz, 0), NumPut("Int", h ? h : LH, sz, 4)
+    src := Buffer(8, 0)
+    bf := Buffer(4, 0), NumPut("UChar", alpha, bf, 2), NumPut("UChar", 1, bf, 3)
+    DllCall("UpdateLayeredWindow", "Ptr", LG.Hwnd, "Ptr", 0, "Ptr", 0, "Ptr", sz, "Ptr", LDC, "Ptr", src, "UInt", 0, "Ptr", bf, "UInt", 2)
+}
+
+; ---------------- input ----------------
+OnDown(wParam, lParam, msg, hwnd)
+{
+    global LG, HoverId, Dark, Sel, GAMES, Busy, Hits
+    if (hwnd != LG.Hwnd)
+        return
+    global SplashOn, SplashT0, SPLASH_MS
+    if (SplashOn) {
+        SplashT0 := Min(SplashT0, A_TickCount - SPLASH_MS)                  ; (a click skips the loading screen)
+        return
+    }
+    ; what was clicked: from the click position itself
+    cx := lParam & 0xFFFF, cy := (lParam >> 16) & 0xFFFF
+    HoverId := ""
+    for h in Hits
+        if (cx >= h.x && cx < h.x + h.w && cy >= h.y && cy < h.y + h.h)
+            HoverId := h.id
+    switch HoverId {
+        case "close":
+            return Quit()
+        case "theme":
+            Dark := !Dark
+            try {
+                DirCreate(AppDir "\M0MENT4M\configs")
+                IniWrite(Dark ? "1" : "0", PrefFile, "loader", "dark")
+            }
+            return 0
+        case "go":
+            if (!Busy)
+                SetTimer(() => Launch(GAMES[Sel]), -10)
+            return 0
+        default:
+            if (SubStr(HoverId, 1, 1) = "g") {
+                Sel := Integer(SubStr(HoverId, 2))
+                return 0
+            }
+    }
+    PostMessage(0xA1, 2, , , "ahk_id " LG.Hwnd)                     ; drag the window
+}
+
+Status(txt, err := false)
+{
+    global StatusTxt, StatusCol
+    StatusTxt := txt
+    StatusCol := err ? NLC(229, 72, 77) : 0
+}
+
+Launch(gm)
+{
+    global BtnTxt, Busy
+    Busy := true
+    cache := AppDir "\M0MENT4M\tools\" gm.name ".cache"                 ; (offline copy, inside the M0MENT4M folder)
+    BtnTxt := "downloading..."
+    Status("getting the newest " gm.name " macro from GitHub")
+    try DirCreate(AppDir "\M0MENT4M\configs"), IniWrite(gm.name, PrefFile, "loader", "game")                 ; (a reload starts the same game again)
+    code := HttpGetText(gm.url)
+    if (InStr(SubStr(code, 1, 200), "#Requires AutoHotkey v2")) {
+        WriteText(cache, code)
+    } else {
+        code := ""
+        try code := FileRead(cache, "UTF-8")
+        if (code = "") {
+            BtnTxt := "launch", Busy := false
+            Status("download failed and there is no saved copy - check your internet", true)
+            return
+        }
+        Status("no connection - starting the saved copy")
+        Sleep(700)
+    }
+    BtnTxt := "starting..."
+    ; the macro keeps its folder (M0MENT4M) next to the loader, and a reload goes through the loader again
+    p := InStr(code, "`n")
+    head := "Global M0MLoaderDir := " Quote(AppDir) "`nGlobal M0MLoaderPath := " Quote(A_ScriptFullPath) "`n"
+    code := SubStr(code, 1, p) head SubStr(code, p + 1)
+    if (!RunFromMemory(code)) {
+        BtnTxt := "launch", Busy := false
+        Status("could not start AutoHotkey", true)
+        return
+    }
+    Sleep(400)
+    Quit()
+}
+
+Quote(s) => '"' StrReplace(s, '"', '""') '"'
+
+; ---------------- downloads, the games list and the loader's own update ----------------
+FileText(path)
+{
+    try return FileRead(path, "UTF-8")
+    return ""
+}
+
+WriteText(path, txt, enc := "UTF-8-RAW")
+{
+    SplitPath(path, , &dir)
+    DirCreate(dir)
+    fo := FileOpen(path, "w", enc)
+    fo.Write(txt)
+    fo.Close()
+}
+
+; starts a download without waiting (the window keeps animating); HttpDone tells when it is there
+HttpStart(url)
+{
+    global SrcDir
+    if (SrcDir != "")                                                     ; (test: the "GitHub" files come from a folder)
+        return {text: FileText(SrcDir "\" StrReplace(RegExReplace(url, ".*/"), "%20", " "))}
+    try {
+        req := ComObject("WinHttp.WinHttpRequest.5.1")
+        req.SetTimeouts(3000, 3000, 3000, 4000)
+        req.Open("GET", url "?t=" A_TickCount, true)
+        req.Send()
+        return {req: req}
+    }
+    return {text: ""}
+}
+
+HttpDone(h, &text)
+{
+    text := ""
+    if (h.HasOwnProp("text")) {
+        text := h.text
+        return true
+    }
+    try {
+        if (!h.req.WaitForResponse(0))
+            return false
+        if (h.req.Status = 200) {
+            body := h.req.ResponseBody
+            n := body.MaxIndex() + 1
+            buf := Buffer(n)
+            pv := NumGet(ComObjValue(body) + 8 + A_PtrSize, "Ptr")        ; (the SAFEARRAY's data)
+            DllCall("RtlMoveMemory", "Ptr", buf, "Ptr", pv, "UPtr", n)
+            text := StrGet(buf, n, "UTF-8")
+        }
+    }
+    text := LTrim(text, Chr(0xFEFF))
+    h.text := text
+    return true
+}
+
+HttpGetText(url)
+{
+    h := HttpStart(url)
+    while (!HttpDone(h, &text))
+        Sleep(30)
+    return text
+}
+
+; games.txt: one game per line, name|subtitle|raw link (empty lines and lines starting with # are skipped)
+LoadGames(txt)
+{
+    global GAMES, Sel
+    list := []
+    Loop Parse, txt, "`n", "`r" {
+        ln := Trim(A_LoopField)
+        if (ln = "" || SubStr(ln, 1, 1) = "#")
+            continue
+        f := StrSplit(ln, "|", " `t")
+        if (f.Length >= 3 && f[1] != "" && SubStr(f[3], 1, 8) = "https://")
+            list.Push({name: f[1], sub: f[2], url: f[3]})
+    }
+    if (!list.Length)
+        return false
+    cur := GAMES[Sel].name
+    GAMES := list, Sel := 1
+    for i, gm in GAMES
+        if (gm.name = cur)
+            Sel := i
+    return true
+}
+
+; the version number inside a downloaded loader (0 = not a loader / broken download)
+LoaderVer(code)
+{
+    if (!InStr(SubStr(code, 1, 200), "#Requires AutoHotkey v2") || !InStr(code, "UpdStart(") || !InStr(code, "RunFromMemory("))
+        return 0
+    return RegExMatch(code, "m)^Global LOADER_VER := (\d+)", &m) ? Integer(m[1]) : 0
+}
+
+UpdStart()
+{
+    global Upd, LOADER_URL, GAMES_URL, SPLASH_MS
+    Upd.state := "check", Upd.until := A_TickCount + SPLASH_MS + 2500
+    Upd.games := HttpStart(GAMES_URL)
+    Upd.loader := Upd.updated ? 0 : HttpStart(LOADER_URL)                ; (just updated: no second check)
+}
+
+UpdPoll()
+{
+    global Upd, LOADER_VER, GamesCache
+    if (Upd.state = "apply") {
+        if (A_TickCount >= Upd.until)
+            ApplyUpdate()
+        return
+    }
+    if (Upd.state != "check")
+        return
+    if (IsObject(Upd.games) && HttpDone(Upd.games, &gt)) {
+        Upd.games := 0
+        if (LoadGames(gt))
+            try WriteText(GamesCache, gt)
+    }
+    if (IsObject(Upd.loader) && HttpDone(Upd.loader, &lt)) {
+        Upd.loader := 0
+        if (LoaderVer(lt) > LOADER_VER) {
+            Upd.state := "apply", Upd.code := lt, Upd.until := A_TickCount + 900
+            return
+        }
+    }
+    if ((!IsObject(Upd.games) && !IsObject(Upd.loader)) || A_TickCount > Upd.until)
+        Upd.state := ""
+}
+
+; the new loader replaces this file and starts; when anything goes wrong this version just keeps running
+ApplyUpdate()
+{
+    global Upd
+    new := A_ScriptFullPath ".new"
+    try {
+        WriteText(new, Upd.code, "UTF-8")
+        FileMove(new, A_ScriptFullPath, 1)
+    } catch {
+        try FileDelete(new)
+        Upd.state := ""
+        return
+    }
+    args := ""
+    for a in A_Args
+        if (a != "/updated")
+            args .= " " Quote(a)
+    Run(Quote(A_AhkPath) " " Quote(A_ScriptFullPath) " /updated" args, A_ScriptDir)
+    ExitApp
+}
+
+; starts AutoHotkey with the script handed over on its standard input (no file is written)
+RunFromMemory(code)
+{
+    sa := Buffer(24, 0)
+    NumPut("UInt", 24, sa, 0), NumPut("Int", 1, sa, 16)
+    hRead := 0, hWrite := 0
+    if !DllCall("CreatePipe", "Ptr*", &hRead, "Ptr*", &hWrite, "Ptr", sa, "UInt", 0)
+        return false
+    DllCall("SetHandleInformation", "Ptr", hWrite, "UInt", 1, "UInt", 0)        ; (only the read end is inherited)
+    si := Buffer(A_PtrSize = 8 ? 104 : 68, 0)
+    NumPut("UInt", si.Size, si, 0)
+    NumPut("UInt", 0x100, si, A_PtrSize = 8 ? 60 : 44)                        ; STARTF_USESTDHANDLES
+    NumPut("Ptr", hRead, si, A_PtrSize = 8 ? 80 : 56)                          ; hStdInput
+    pi := Buffer(A_PtrSize * 2 + 8, 0)
+    cmd := '"' A_AhkPath '" /CP65001 *'
+    ok := DllCall("CreateProcessW", "Ptr", 0, "Str", cmd, "Ptr", 0, "Ptr", 0, "Int", 1, "UInt", 0, "Ptr", 0, "Str", AppDir, "Ptr", si, "Ptr", pi)
+    DllCall("CloseHandle", "Ptr", hRead)
+    if (!ok) {
+        DllCall("CloseHandle", "Ptr", hWrite)
+        return false
+    }
+    DllCall("CloseHandle", "Ptr", NumGet(pi, 0, "Ptr"))
+    DllCall("CloseHandle", "Ptr", NumGet(pi, A_PtrSize, "Ptr"))
+    n := StrPut(code, "UTF-8") - 1
+    buf := Buffer(n)
+    StrPut(code, buf, n, "UTF-8")
+    written := 0, off := 0
+    while (off < n) {
+        if !DllCall("WriteFile", "Ptr", hWrite, "Ptr", buf.Ptr + off, "UInt", n - off, "UInt*", &written, "Ptr", 0)
+            break
+        off += written
+    }
+    DllCall("CloseHandle", "Ptr", hWrite)
+    return off >= n
+}
+
+Quit(*)
+{
+    global WinA
+    SetTimer(Frame, 0)
+    Loop 10 {
+        Present(Round(255 * (1 - A_Index / 10)))
+        Sleep(14)
+    }
+    ExitApp
+}
+
+Esc::Quit()
+
+
+
+; ===== drawing helpers taken from M0MENT4M 2.0 (the same look as the macro) =====
+
+NLMakeFont(name, px, style)
+{
+    fam := 0, font := 0
+    DllCall("gdiplus\GdipCreateFontFamilyFromName", "WStr", name, "Ptr", 0, "Ptr*", &fam)
+    DllCall("gdiplus\GdipCreateFont", "Ptr", fam, "Float", px, "Int", style, "Int", 2, "Ptr*", &font)
+    return font
+}
+
+NLC(r, g, b, a := 255)
+{
+    global NLAlphaPage
+    return (Round(a * NLAlphaPage) << 24) | (r << 16) | (g << 8) | b
+}
+
+NLPath(x, y, w, h, r)
+{
+    path := 0
+    DllCall("gdiplus\GdipCreatePath", "Int", 0, "Ptr*", &path)
+    r := Min(r, w / 2, h / 2)
+    d := r * 2
+    DllCall("gdiplus\GdipAddPathArc", "Ptr", path, "Float", x, "Float", y, "Float", d, "Float", d, "Float", 180, "Float", 90)
+    DllCall("gdiplus\GdipAddPathArc", "Ptr", path, "Float", x + w - d, "Float", y, "Float", d, "Float", d, "Float", 270, "Float", 90)
+    DllCall("gdiplus\GdipAddPathArc", "Ptr", path, "Float", x + w - d, "Float", y + h - d, "Float", d, "Float", d, "Float", 0, "Float", 90)
+    DllCall("gdiplus\GdipAddPathArc", "Ptr", path, "Float", x, "Float", y + h - d, "Float", d, "Float", d, "Float", 90, "Float", 90)
+    DllCall("gdiplus\GdipClosePathFigure", "Ptr", path)
+    return path
+}
+
+NLCacheAge(cur, old, delFn)
+{
+    pc := A_IsCritical
+    Critical
+    for k, h in old {
+        if (!cur.Has(k))                  ; (a handle that was promoted back into the current cache is still in use)
+            DllCall(delFn, "Ptr", h)
+    }
+    old.Clear()
+    for k, h in cur
+        old[k] := h
+    cur.Clear()
+    Critical(pc ? "On" : "Off")
+}
+
+NLBrush(argb)
+{
+    global NLBrushCache, NLBrushOld
+    h := NLBrushCache.Get(argb, 0)
+    if (h)
+        return h
+    h := NLBrushOld.Get(argb, 0)
+    if (h) {
+        NLBrushCache[argb] := h
+        return h
+    }
+    if (NLBrushCache.Count > 20000)
+        NLCacheAge(NLBrushCache, NLBrushOld, "gdiplus\GdipDeleteBrush")
+    b := 0
+    DllCall("gdiplus\GdipCreateSolidFill", "UInt", argb, "Ptr*", &b)
+    NLBrushCache[argb] := b
+    return b
+}
+
+NLPen(argb, wd := 1, caps := 0)
+{
+    global NLPenCache, NLPenOld
+    key := argb "|" wd "|" caps
+    h := NLPenCache.Get(key, 0)
+    if (h)
+        return h
+    h := NLPenOld.Get(key, 0)
+    if (h) {
+        NLPenCache[key] := h
+        return h
+    }
+    if (NLPenCache.Count > 20000)
+        NLCacheAge(NLPenCache, NLPenOld, "gdiplus\GdipDeletePen")
+    pen := 0
+    DllCall("gdiplus\GdipCreatePen1", "UInt", argb, "Float", wd, "Int", 2, "Ptr*", &pen)
+    if (caps) {
+        DllCall("gdiplus\GdipSetPenStartCap", "Ptr", pen, "Int", 2)
+        DllCall("gdiplus\GdipSetPenEndCap", "Ptr", pen, "Int", 2)
+    }
+    NLPenCache[key] := pen
+    return pen
+}
+
+NLPathK(x, y, w, h, r)
+{
+    global NLPathCache, NLPathOld
+    key := Round(x, 1) "|" Round(y, 1) "|" Round(w, 1) "|" Round(h, 1) "|" r
+    pa := NLPathCache.Get(key, 0)
+    if (pa)
+        return pa
+    pa := NLPathOld.Get(key, 0)
+    if (pa) {
+        NLPathCache[key] := pa
+        return pa
+    }
+    if (NLPathCache.Count > 20000)
+        NLCacheAge(NLPathCache, NLPathOld, "gdiplus\GdipDeletePath")
+    pa := NLPath(x, y, w, h, r)
+    NLPathCache[key] := pa
+    return pa
+}
+
+NLRR(x, y, w, h, r, argb)
+{
+    global NLG
+    brush := NLBrush(argb)
+    if (r <= 0)
+        DllCall("gdiplus\GdipFillRectangle", "Ptr", NLG, "Ptr", brush, "Float", x, "Float", y, "Float", w, "Float", h)
+    else
+        DllCall("gdiplus\GdipFillPath", "Ptr", NLG, "Ptr", brush, "Ptr", NLPathK(x, y, w, h, r))
+}
+
+NLRRLine(x, y, w, h, r, argb)
+{
+    global NLG
+    DllCall("gdiplus\GdipDrawPath", "Ptr", NLG, "Ptr", NLPen(argb, 1, 0), "Ptr", NLPathK(x + 0.5, y + 0.5, w - 1, h - 1, r))
+}
+
+NLDisc(cx, cy, rad, argb)
+{
+    global NLG
+    DllCall("gdiplus\GdipFillEllipse", "Ptr", NLG, "Ptr", NLBrush(argb), "Float", cx - rad, "Float", cy - rad, "Float", rad * 2, "Float", rad * 2)
+}
+
+NLText(str, x, y, argb, font, w := 0, h := 0, ha := 0, va := 0, wrap := false)
+{
+    global NLG, NLFmt, NLFmtW
+    static lastA := Map(), lastV := Map(), rc := Buffer(16, 0)
+    if (str = "")
+        return
+    ; the menu, the HUDs, the widgets and the companion all draw on their own timers and share the string format and this
+    ; rectangle: nothing may interrupt between setting them and drawing
+    pc := A_IsCritical
+    Critical
+    fmt := wrap ? NLFmtW : NLFmt
+    if (!lastA.Has(fmt) || lastA[fmt] != ha) {
+        DllCall("gdiplus\GdipSetStringFormatAlign", "Ptr", fmt, "Int", ha)
+        lastA[fmt] := ha
+    }
+    if (!lastV.Has(fmt) || lastV[fmt] != va) {
+        DllCall("gdiplus\GdipSetStringFormatLineAlign", "Ptr", fmt, "Int", va)
+        lastV[fmt] := va
+    }
+    NumPut("Float", x, rc, 0)
+    NumPut("Float", y, rc, 4)
+    NumPut("Float", w ? w : 1000, rc, 8)
+    NumPut("Float", h ? h : 1000, rc, 12)
+    DllCall("gdiplus\GdipDrawString", "Ptr", NLG, "WStr", str, "Int", -1, "Ptr", font, "Ptr", rc, "Ptr", fmt, "Ptr", NLBrush(argb))
+    Critical(pc ? "On" : "Off")
+}
+
+NLTextW(str, font)
+{
+    global NLG, NLFmt
+    static known := Map()
+    key := font "|" str
+    if (known.Has(key))
+        return known[key]
+    if (known.Count > 4000)
+        known.Clear()
+    known[key] := NLTextWRaw(str, font)
+    return known[key]
+}
+
+NLTextWRaw(str, font)
+{
+    global NLG, NLFmt
+    rc := Buffer(16, 0)
+    NumPut("Float", 1000, rc, 8)
+    NumPut("Float", 100, rc, 12)
+    out := Buffer(16, 0)
+    DllCall("gdiplus\GdipMeasureString", "Ptr", NLG, "WStr", str, "Int", -1, "Ptr", font, "Ptr", rc, "Ptr", NLFmt, "Ptr", out, "Ptr", 0, "Ptr", 0)
+    return NumGet(out, 8, "Float")
+}
+
+NLLineW(x1, y1, x2, y2, argb, wd)
+{
+    global NLG
+    DllCall("gdiplus\GdipDrawLine", "Ptr", NLG, "Ptr", NLPen(argb, wd, 1), "Float", x1, "Float", y1, "Float", x2, "Float", y2)
+}
+
+SPGradTable(stops, a)
+{
+    static cache := Map()
+    key := ObjPtr(stops) ":" a
+    if (cache.Has(key))
+        return cache[key]
+    if (cache.Count > 800)
+        cache.Clear()
+    m := stops.Length
+    n := m + 1
+    cols := Buffer(4 * n), pos := Buffer(4 * n)
+    Loop n {
+        c := stops[Mod(A_Index - 1, m) + 1]
+        NumPut("UInt", (a << 24) | (c[1] << 16) | (c[2] << 8) | c[3], cols, (A_Index - 1) * 4)
+        NumPut("Float", (A_Index - 1) / m, pos, (A_Index - 1) * 4)
+    }
+    cache[key] := {m: m, n: n, cols: cols, pos: pos, stops: stops}      ; (the list is kept alive: its address is the key)
+    return cache[key]
+}
+
+SPGradBorder(x, y, w, h, r, stops, tt, wd)
+{
+    global NLG, NLAlphaPage
+    a := Max(0, Min(255, Round(255 * NLAlphaPage)))
+    tb := SPGradTable(stops, a)
+    m := tb.m, n := tb.n, cols := tb.cols, pos := tb.pos
+    p1 := Buffer(8), p2 := Buffer(8)
+    NumPut("Float", x, p1, 0), NumPut("Float", y, p1, 4)
+    NumPut("Float", x + w, p2, 0), NumPut("Float", y + h, p2, 4)
+    brush := 0
+    DllCall("gdiplus\GdipCreateLineBrush", "Ptr", p1, "Ptr", p2, "UInt", NumGet(cols, 0, "UInt"), "UInt", NumGet(cols, 4 * m, "UInt"), "Int", 0, "Ptr*", &brush)
+    DllCall("gdiplus\GdipSetLinePresetBlend", "Ptr", brush, "Ptr", cols, "Ptr", pos, "Int", n)
+    f := stops.HasProp("isStatic") ? 0 : tt - Floor(tt)
+    DllCall("gdiplus\GdipTranslateLineTransform", "Ptr", brush, "Float", -f * w, "Float", -f * h, "Int", 0)
+    pen := 0
+    DllCall("gdiplus\GdipCreatePen2", "Ptr", brush, "Float", wd, "Int", 2, "Ptr*", &pen)
+    DllCall("gdiplus\GdipDrawPath", "Ptr", NLG, "Ptr", pen, "Ptr", NLPathK(x, y, w, h, r))
+    DllCall("gdiplus\GdipDeletePen", "Ptr", pen)
+    DllCall("gdiplus\GdipDeleteBrush", "Ptr", brush)
+}
+
+SPGradFill(x, y, w, h, r, stops, tt, alpha)
+{
+    global NLG, NLAlphaPage
+    a := Max(0, Min(255, Round(255 * NLAlphaPage * alpha)))
+    tb := SPGradTable(stops, a)
+    m := tb.m, n := tb.n, cols := tb.cols, pos := tb.pos
+    p1 := Buffer(8), p2 := Buffer(8)
+    NumPut("Float", x, p1, 0), NumPut("Float", y, p1, 4)
+    NumPut("Float", x + w, p2, 0), NumPut("Float", y + h, p2, 4)
+    brush := 0
+    DllCall("gdiplus\GdipCreateLineBrush", "Ptr", p1, "Ptr", p2, "UInt", NumGet(cols, 0, "UInt"), "UInt", NumGet(cols, 4 * m, "UInt"), "Int", 0, "Ptr*", &brush)
+    DllCall("gdiplus\GdipSetLinePresetBlend", "Ptr", brush, "Ptr", cols, "Ptr", pos, "Int", n)
+    f := stops.HasProp("isStatic") ? 0 : tt - Floor(tt)
+    DllCall("gdiplus\GdipTranslateLineTransform", "Ptr", brush, "Float", -f * w, "Float", -f * h, "Int", 0)
+    DllCall("gdiplus\GdipFillPath", "Ptr", NLG, "Ptr", brush, "Ptr", NLPathK(x, y, w, h, r))
+    DllCall("gdiplus\GdipDeleteBrush", "Ptr", brush)
+}
+
+SPStopsSample(st, pos)
+{
+    if (st.HasProp("isStatic"))
+        return [st[1][1], st[1][2], st[1][3]]
+    m := st.Length
+    pos := pos - Floor(pos)
+    q := pos * m
+    k := Floor(q)
+    fr := q - k
+    c1 := st[Mod(k, m) + 1], c2 := st[Mod(k + 1, m) + 1]
+    return [Round(c1[1] + (c2[1] - c1[1]) * fr), Round(c1[2] + (c2[2] - c1[2]) * fr), Round(c1[3] + (c2[3] - c1[3]) * fr)]
+}
+
+HWPoly(pts, argb)
+{
+    global NLG
+    n := pts.Length // 2
+    buf := Buffer(n * 8)
+    for i, v in pts
+        NumPut("Float", v, buf, (i - 1) * 4)
+    DllCall("gdiplus\GdipFillPolygon2", "Ptr", NLG, "Ptr", NLBrush(argb), "Ptr", buf, "Int", n)
+}
+
+HWOval(cx, cy, rx, ry, argb)
+{
+    global NLG
+    DllCall("gdiplus\GdipFillEllipse", "Ptr", NLG, "Ptr", NLBrush(argb), "Float", cx - rx, "Float", cy - ry, "Float", rx * 2, "Float", ry * 2)
+}
+
+CompElfHair(f, shade := 1.0)
+{
+    f := Max(0.0, Min(1.0, f))
+    r := 232 + (46 - 232) * f, g := 246 + (108 - 246) * f, b := 254 + (226 - 254) * f
+    return NLC(Round(r * shade), Round(g * shade), Round(b * (shade * 0.5 + 0.5)))
+}
+
+CompEyeOff(y0, &ox, &oy)
+{
+    global CompFollow, CompGui, CompScale
+    ox := 0, oy := 0
+    if (!CompFollow || !IsObject(CompGui))
+        return
+    pt := Buffer(8, 0)
+    DllCall("GetCursorPos", "Ptr", pt)
+    CompGui.GetPos(&gx, &gy)
+    sc := CompScale / 100
+    ox := Max(-1.0, Min(1.0, (NumGet(pt, 0, "Int") - (gx + 120 * sc)) / 260)) * 3.6
+    oy := Max(-1.0, Min(1.0, (NumGet(pt, 4, "Int") - (gy + (y0 + 120) * sc)) / 260)) * 3.0
+}
+
+CompDrawElf(t)
+{
+    global CompBubbleUntil
+    skin := NLC(255, 238, 232)
+    ink := NLC(58, 80, 150)
+    gold := NLC(230, 184, 78)
+    goldD := NLC(190, 140, 50)
+    brown := NLC(168, 84, 40)
+    white := NLC(248, 248, 255)
+    oy := 76
+    bob := 3 * Sin(t * 2.0)
+    y0 := oy + bob
+    sway := Sin(t * 1.3)
+    talking := (A_TickCount < CompBubbleUntil)
+
+    HWOval(120, oy + 300, 50 - bob, 7, NLC(0, 0, 0, 50))
+
+    ; very long, wavy hair behind (pale on top, deep blue at the ends), with a few loose locks
+    HWOval(120, y0 + 104, 66, 66, CompElfHair(0.1, 0.84))
+    for side in [-1, 1] {
+        for s in [3, 1, 0] {
+            topx := 120 + side * (40 + s * 9), topy := y0 + 90
+            tipx := 120 + side * (58 + s * 17) + sway * (9 + s * 5) * side, tipy := y0 + 214 + s * 13
+            Loop 24 {
+                f := (A_Index - 1) / 23
+                wave := 5 * Sin(f * 8 + t * 1.2 + s * 1.3 + (side > 0 ? 0 : 2)) * f
+                px := topx + (tipx - topx) * f + sway * 7 * f * f + wave
+                py := topy + (tipy - topy) * f
+                rr := (14 - 8 * f) * (1 - s * 0.08)
+                HWOval(px, py, rr * 0.88, rr * 1.4, CompElfHair(0.1 + f * 0.95 - s * 0.04, 0.92))
+            }
+        }
+    }
+
+    ; legs: white boots with gold and brown trim, blue sandals
+    for lx in [108, 132] {
+        NLLineW(lx, y0 + 248, lx, y0 + 292 - bob, white, 11)
+        NLRR(lx - 6, y0 + 252, 12, 4, 1, gold)
+        NLRR(lx - 6, y0 + 270, 12, 3, 1, brown)
+        HWOval(lx, oy + 296, 11, 6, NLC(112, 132, 234))
+    }
+    ; skirt: white with a long hem of brown and gold, a centre panel and a brown side sash
+    HWPoly([96, y0 + 172, 144, y0 + 172, 170, y0 + 266, 70, y0 + 266], NLC(238, 240, 253))
+    HWPoly([110, y0 + 176, 130, y0 + 176, 138, y0 + 266, 102, y0 + 266], NLC(214, 218, 244))
+    NLRR(70, y0 + 258, 100, 8, 3, brown)
+    NLRR(70, y0 + 253, 100, 2.5, 1, gold)
+    HWPoly([146, y0 + 168, 160, y0 + 172, 176, y0 + 268, 158, y0 + 268], brown)
+    NLLineW(151, y0 + 172, 166, y0 + 266, gold, 1.6)
+    Loop 4
+        NLDisc(160 + A_Index * 3.4, y0 + 200 + A_Index * 17, 2.1, NLC(255, 246, 220))
+    ; strapless bodice, shoulders bare, big gold collar and gem
+    NLRR(86, y0 + 150, 20, 14, 7, skin)
+    NLRR(134, y0 + 150, 20, 14, 7, skin)
+    HWPoly([98, y0 + 160, 142, y0 + 160, 140, y0 + 186, 100, y0 + 186], white)
+    HWPoly([94, y0 + 154, 146, y0 + 154, 138, y0 + 164, 102, y0 + 164], gold)
+    NLRR(100, y0 + 184, 40, 8, 3, brown)
+    ; diagonal brown strap with a white diamond pattern
+    NLLineW(100, y0 + 160, 140, y0 + 186, brown, 6)
+    Loop 4
+        NLDisc(104 + A_Index * 8.5, y0 + 163 + A_Index * 5.2, 1.6, NLC(255, 246, 220))
+    HWPoly([120, y0 + 156, 131, y0 + 170, 120, y0 + 186, 109, y0 + 170], goldD)
+    HWPoly([120, y0 + 158, 129, y0 + 170, 120, y0 + 184, 111, y0 + 170], gold)
+    HWPoly([120, y0 + 161, 126, y0 + 170, 120, y0 + 180, 114, y0 + 170], NLC(48, 138, 242))
+    HWPoly([120, y0 + 164, 123.5, y0 + 170, 120, y0 + 175, 116.5, y0 + 170], NLC(170, 220, 255))
+    ; arms with gold bands
+    NLLineW(94, y0 + 162, 82, y0 + 214 + 3 * Sin(t * 2.0 + 1), skin, 9)
+    NLRR(86, y0 + 172, 9, 5, 2, gold)
+    NLDisc(82, y0 + 218 + 3 * Sin(t * 2.0 + 1), 5.5, skin)
+    wv := Sin(t * 2.6)
+    NLLineW(146, y0 + 162, 164 + 5 * wv, y0 + 196 + 4 * Sin(t * 2.6 + 1.2), skin, 9)
+    NLRR(143, y0 + 172, 9, 5, 2, gold)
+    NLDisc(166 + 6 * wv, y0 + 194 + 4 * Sin(t * 2.6 + 1.2), 5.5, skin)
+    NLRR(112, y0 + 146, 16, 12, 4, skin)
+
+    ; face
+    HWOval(120, y0 + 114, 50, 46, skin)
+    HWOval(83, y0 + 139, 8, 4.4, NLC(255, 165, 188, 90))
+    HWOval(157, y0 + 139, 8, 4.4, NLC(255, 165, 188, 90))
+    CompEyeOff(y0, &ox, &oyy)
+    cyc := Mod(t, 11.0)
+    happy := (cyc > 8.6 && cyc < 11.0)
+    blink := (Mod(t, 4.6) > 4.42)
+    for e in [[98, 1], [142, -1]] {
+        ex := e[1]
+        if (happy) {
+            NLLineW(ex - 10, y0 + 127, ex, y0 + 119, ink, 2.8)
+            NLLineW(ex, y0 + 119, ex + 10, y0 + 127, ink, 2.8)
+            continue
+        }
+        if (blink) {
+            HWOval(ex, y0 + 121, 13, 16, skin)
+            NLLineW(ex - 10, y0 + 123, ex, y0 + 127, ink, 2.6)
+            NLLineW(ex, y0 + 127, ex + 10, y0 + 123, ink, 2.6)
+            continue
+        }
+        HWOval(ex, y0 + 122, 11.5, 13.5, NLC(255, 255, 255))
+        HWOval(ex + ox, y0 + 123 + oyy, 8.6, 11.2, NLC(86, 160, 236))
+        HWOval(ex + ox, y0 + 124 + oyy, 5, 7, NLC(30, 56, 150))
+        NLDisc(ex + ox + 3, y0 + 118 + oyy, 3.3, NLC(255, 255, 255))
+        NLDisc(ex + ox - 3, y0 + 128 + oyy, 1.7, NLC(255, 255, 255, 210))
+        ; heavy upper lid and lashes for the calm, slightly sharp look
+        NLLineW(ex - 12 * e[2], y0 + 112, ex + 11 * e[2], y0 + 109, ink, 3.2)
+        NLLineW(ex - 12 * e[2], y0 + 112, ex - 15.5 * e[2], y0 + 115, ink, 2.2)
+        NLLineW(ex + 4 * e[2], y0 + 109.6, ex + 9 * e[2], y0 + 106.6, ink, 1.8)
+    }
+    if (talking) {
+        HWOval(120, y0 + 143, 3.4, 2.0 + 2.0 * Abs(Sin(t * 12)), NLC(196, 90, 110))
+    } else {
+        NLLineW(114, y0 + 142.5, 120, y0 + 145, NLC(196, 110, 130), 1.5)
+        NLLineW(120, y0 + 145, 126, y0 + 142.5, NLC(196, 110, 130), 1.5)
+    }
+
+    ; messy hair on top: tufts, spiky bangs, long face-framing locks, an ahoge
+    for tf in [[86, 58, -12, -7], [104, 52, -5, -10], [136, 52, 5, -10], [154, 58, 12, -7]] {
+        HWPoly([tf[1] - 10, y0 + tf[2] + 14, tf[1] + tf[3], y0 + tf[2] + tf[4], tf[1] + 10, y0 + tf[2] + 14], CompElfHair(0.05 + (tf[1] > 120 ? 0.04 : 0)))
+    }
+    HWOval(66, y0 + 128, 9, 30, CompElfHair(0.28))
+    HWOval(174, y0 + 128, 9, 30, CompElfHair(0.28))
+    HWPoly([62, y0 + 120, 64, y0 + 70, 88, y0 + 52, 120, y0 + 46, 152, y0 + 52, 176, y0 + 70, 178, y0 + 120, 168, y0 + 96, 160, y0 + 134, 150, y0 + 98
+        , 140, y0 + 126, 130, y0 + 96, 120, y0 + 124, 110, y0 + 96, 100, y0 + 126, 90, y0 + 98, 80, y0 + 134, 72, y0 + 96], CompElfHair(0.05))
+    Loop 6 {
+        k := A_Index
+        NLLineW(120, y0 + 49, 62 + k * 19, y0 + 104 + (k = 1 || k = 6 ? 22 : 0), NLC(140, 190, 244, 120), 1.5)
+    }
+    ; long locks in front of the shoulders
+    for side in [-1, 1] {
+        Loop 13 {
+            f := (A_Index - 1) / 12
+            px := 120 + side * (58 + 3 * f) + sway * 5 * f * side + 3 * Sin(f * 7 + t * 1.2) * f
+            py := y0 + 126 + 124 * f
+            HWOval(px, py, 6.2 - 3.2 * f, 9 - 3 * f, CompElfHair(0.15 + f * 0.85))
+        }
+    }
+    NLLineW(120, y0 + 50, 114, y0 + 36, CompElfHair(0.3), 3)
+    NLLineW(114, y0 + 36, 121, y0 + 25, CompElfHair(0.3), 3)
+    NLLineW(121, y0 + 25, 133, y0 + 27, CompElfHair(0.3), 3)
+
+    ; floating ice sparkles
+    Loop 4 {
+        k := A_Index
+        sx := 120 + 94 * Cos(t * 0.7 + k * 1.6), sy := y0 + 110 + 70 * Sin(t * 0.7 + k * 1.6)
+        s := 3.2 + 2.2 * Sin(t * 4.6 + k)
+        NLLineW(sx - s, sy, sx + s, sy, NLC(190, 230, 255, 210), 1.5)
+        NLLineW(sx, sy - s, sx, sy + s, NLC(190, 230, 255, 210), 1.5)
+    }
+}
+
