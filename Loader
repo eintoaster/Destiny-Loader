@@ -442,7 +442,7 @@ Launch(gm)
     code := FreshText(gm.url)
     if (!InStr(SubStr(code, 1, 200), "#Requires AutoHotkey v2")) {
         BtnTxt := "launch", Busy := false
-        Status("could not load the macro - check your internet connection", true)
+        Status("could not download the macro - check your internet connection", true)
         return
     }
     BtnTxt := "starting..."
@@ -590,7 +590,7 @@ UpdPoll()
         return
     if (IsObject(Upd.games) && HttpDone(Upd.games, &gt)) {
         Upd.games := 0
-        if (!LoadGames(gt, LastGame) && !Upd.graw)                         ; (GitHub's API did not answer: try the raw link)
+        if (!LoadGames(gt) && !Upd.graw)                                   ; (always opens on the first game, Evade; GitHub's API did not answer: try the raw link)
             Upd.graw := true, Upd.games := HttpStart(GAMES_URL)
     }
     if (IsObject(Upd.loader) && HttpDone(Upd.loader, &lt)) {
