@@ -442,7 +442,7 @@ Launch(gm)
     code := FreshText(gm.url)
     if (!InStr(SubStr(code, 1, 200), "#Requires AutoHotkey v2")) {
         BtnTxt := "launch", Busy := false
-        Status("could not download the macro - check your internet connection", true)
+        Status("could not load the macro - check your internet connection", true)
         return
     }
     BtnTxt := "starting..."
