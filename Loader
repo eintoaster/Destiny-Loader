@@ -33,6 +33,7 @@ Global SrcDir := ""                    ; (test only, with debug.on: /src=<folder
 ; the list of games comes from games.txt on GitHub (one line per game: name|subtitle|raw link), this one is only shown until it is there
 Global GAMES := [{name: "Evade", sub: "M0MENT4M Movement Macro", url: REPO "M0MENT4M"}]
 Global LastGame := ""
+Global Changelog := ""                 ; (the small changelog line at the top right: "changelog|..." in games.txt)
 Global SplashOn := true, SplashT0 := A_TickCount, SPLASH_MS := 3200, SplashEnd := 0
 Global SelT := 0                       ; (when a game card was clicked: the tick animation)
 Global Sel := 1, StatusTxt := "", StatusCol := 0, BtnTxt := "launch", Busy := false
@@ -218,6 +219,16 @@ Frame()
     rx := 440, rw := LW - 46 - rx
     ti := Min(1.0, t / 0.6), e := 1 - (1 - ti) ** 3
     NLAlphaPage := e
+    if (Changelog != "") {                                                ; (the changelog line from games.txt, in a small pill)
+        clw := NLTextW("changelog:", FSmall), ctw := Min(NLTextW(Changelog, FSmall), rx + rw - 250 - clw - 38)   ; (can grow left, up to the title)
+        cpw := clw + ctw + 38, cpx := rx + rw - cpw, cpy := 64 + (1 - e) * 8
+        NLRR(cpx, cpy, cpw, 26, 13, P("card"))
+        NLRRLine(cpx, cpy, cpw, 26, 13, P("line"))
+        cc := SPStopsSample(AUR, t * 0.2)
+        NLDisc(cpx + 14, cpy + 13, 3.4 + 0.7 * Sin(t * 3), NLC(cc[1], cc[2], cc[3]))
+        NLText("changelog:", cpx + 24, cpy, P("muted"), FSmall, clw + 4, 26, 0, 1)
+        NLText(Changelog, cpx + 28 + clw, cpy, P("text"), FSmall, ctw + 4, 26, 0, 1)
+    }
     NLText("welcome back", rx, 108 + (1 - e) * 14, P("text"), FBig, rw, 46, 2, 1)
     NLText("choose your roblox game", rx, 154 + (1 - e) * 10, P("muted"), FTxt, rw, 22, 2, 1)
     NLText("GAMES", rx, 206, P("muted"), FSmall, rw, 18, 2, 1)
@@ -583,18 +594,23 @@ FreshText(url)
 ; games.txt: one game per line, name|subtitle|raw link (empty lines and lines starting with # are skipped)
 LoadGames(txt, pick := "")
 {
-    global GAMES, Sel
-    list := []
+    global GAMES, Sel, Changelog
+    list := [], note := ""
     Loop Parse, txt, "`n", "`r" {
         ln := Trim(A_LoopField)
         if (ln = "" || SubStr(ln, 1, 1) = "#")
             continue
+        if (SubStr(ln, 1, 10) = "changelog|") {
+            note := Trim(SubStr(ln, 11))
+            continue
+        }
         f := StrSplit(ln, "|", " `t")
         if (f.Length >= 3 && f[1] != "" && SubStr(f[3], 1, 8) = "https://")
             list.Push({name: f[1], sub: f[2], url: f[3]})
     }
     if (!list.Length)
         return false
+    Changelog := note
     cur := pick != "" ? pick : GAMES[Sel].name
     GAMES := list, Sel := 1
     for i, gm in GAMES
