@@ -34,6 +34,8 @@ Global Upd := {loader: 0, games: 0, state: "", until: 0, updated: false}   ; (th
 Global LW := 820, LH := 520, ElfX := 40, ElfY := 66, ElfS := 1.12
 Global LG, LDC := 0, LBmp := 0, Hits := [], HitsNext := [], HoverId := "", Anim := Map(), T0 := A_TickCount, ThemeT := 1.0
 Global AUR := [[16, 185, 129], [34, 211, 238], [99, 102, 241], [168, 85, 247]]
+Global QuickLaunch := false
+Global FSplash := 0, FSplashJ := 0, FSplashS := 0, Petals := []
 
 NLGdipInit()
 Global FTitle := NLMakeFont("Segoe UI Black", 22, 0)
@@ -60,7 +62,6 @@ LG.Show("NA")
 WinActivate("ahk_id " LG.Hwnd)
 SetTimer(Frame, 16)
 OnMessage(0x0201, OnDown)
-Global QuickLaunch := false
 for a in A_Args {
     if (a = "/launch")
         QuickLaunch := true
@@ -217,7 +218,6 @@ Frame()
 }
 
 ; ---------------- loading screen (anime style, different from the macro's) ----------------
-Global FSplash := 0, FSplashJ := 0, FSplashS := 0, Petals := []
 SplashInit()
 {
     global FSplash, FSplashJ, FSplashS, Petals, LW, LH
