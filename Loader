@@ -18,8 +18,6 @@ for old in [AppDir "\Destiny\configs\loader.ini", AppDir "\M0MENT4M\configs\load
         try FileDelete(old)
     }
 }
-try DirDelete(AppDir "\Destiny\configs")                      ; (only removed when empty: the older loader's settings folder)
-try DirDelete(AppDir "\Destiny")
 Global Dark := true
 try Dark := IniRead(PrefFile, "loader", "dark", "1") = "1"
 
@@ -424,7 +422,7 @@ Status(txt, err := false)
 QuickStart()
 {
     global GAMES_URL, LastGame, GAMES, Sel
-    LoadGames(HttpGetText(GAMES_URL), LastGame)
+    LoadGames(FreshText(GAMES_URL), LastGame)
     if (LastGame != "" && GAMES[Sel].name != LastGame) {               ; (not in the list: the saved link of the game that was running)
         url := ""
         try url := IniRead(PrefFile, "loader", "url", "")
@@ -441,7 +439,7 @@ Launch(gm)
     BtnTxt := "downloading..."
     Status("getting the latest version")
     try DirCreate(PrefDir), IniWrite(gm.name, PrefFile, "loader", "game"), IniWrite(gm.url, PrefFile, "loader", "url")                 ; (a reload starts the same game again)
-    code := HttpGetText(gm.url)
+    code := FreshText(gm.url)
     if (!InStr(SubStr(code, 1, 200), "#Requires AutoHotkey v2")) {
         BtnTxt := "launch", Busy := false
         Status("could not download the macro - check your internet connection", true)
@@ -484,11 +482,11 @@ HttpStart(url, accept := "")
 {
     global SrcDir
     if (SrcDir != "")                                                     ; (test: the "GitHub" files come from a folder)
-        return {text: FileText(SrcDir "\" StrReplace(RegExReplace(url, ".*/"), "%20", " "))}
+        return {text: FileText(SrcDir "\" StrReplace(RegExReplace(RegExReplace(url, "\?.*"), ".*/"), "%20", " "))}
     try {
         req := ComObject("WinHttp.WinHttpRequest.5.1")
         req.SetTimeouts(3000, 3000, 3000, 4000)
-        req.Open("GET", url "?t=" A_TickCount, true)
+        req.Open("GET", url (InStr(url, "?") ? "&" : "?") "t=" A_TickCount, true)
         if (accept != "")
             req.SetRequestHeader("Accept", accept)
         req.Send()
@@ -521,12 +519,23 @@ HttpDone(h, &text)
     return true
 }
 
-HttpGetText(url)
+HttpGetText(url, accept := "")
 {
-    h := HttpStart(url)
+    h := HttpStart(url, accept)
     while (!HttpDone(h, &text))
         Sleep(30)
     return text
+}
+
+; GitHub's raw links can show an old file for a few minutes after an upload: the same file through GitHub's API is always the newest
+RawToApi(url) => RegExMatch(url, "i)^https://raw\.githubusercontent\.com/([^/]+)/([^/]+)/(?:refs/heads/)?([^/]+)/(.+)$", &m)
+    ? "https://api.github.com/repos/" m[1] "/" m[2] "/contents/" m[4] "?ref=" m[3] : ""
+
+FreshText(url)
+{
+    if ((api := RawToApi(url)) != "" && (text := HttpGetText(api, "application/vnd.github.raw")) != "")
+        return text
+    return HttpGetText(url)                                               ; (the API did not answer: the raw link)
 }
 
 ; games.txt: one game per line, name|subtitle|raw link (empty lines and lines starting with # are skipped)
@@ -562,7 +571,7 @@ UpdStart()
 {
     global Upd, LOADER_API, GAMES_URL, SPLASH_MS
     Upd.state := "check", Upd.until := A_TickCount + SPLASH_MS + 2500
-    Upd.games := HttpStart(GAMES_URL)
+    Upd.games := HttpStart(RawToApi(GAMES_URL), "application/vnd.github.raw"), Upd.graw := false
     Upd.loader := Upd.updated ? 0 : HttpStart(LOADER_API, "application/vnd.github.raw")   ; (just updated: no second check)
     Upd.raw := false
     if (FileExist(A_ScriptDir "\debug.on") && SrcDir = "")              ; (your own working copy: never overwritten while you edit it)
@@ -581,7 +590,8 @@ UpdPoll()
         return
     if (IsObject(Upd.games) && HttpDone(Upd.games, &gt)) {
         Upd.games := 0
-        LoadGames(gt, LastGame)
+        if (!LoadGames(gt, LastGame) && !Upd.graw)                         ; (GitHub's API did not answer: try the raw link)
+            Upd.graw := true, Upd.games := HttpStart(GAMES_URL)
     }
     if (IsObject(Upd.loader) && HttpDone(Upd.loader, &lt)) {
         Upd.loader := 0
