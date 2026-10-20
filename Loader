@@ -34,6 +34,7 @@ Global SrcDir := ""                    ; (test only, with debug.on: /src=<folder
 Global GAMES := [{name: "Evade", sub: "M0MENT4M Movement Macro", url: REPO "M0MENT4M%202.0"}]
 Global LastGame := ""
 Global SplashOn := true, SplashT0 := A_TickCount, SPLASH_MS := 3200, SplashEnd := 0
+Global SelT := 0                       ; (when a game card was clicked: the tick animation)
 Global Sel := 1, StatusTxt := "", StatusCol := 0, BtnTxt := "launch", Busy := false
 Global Upd := {loader: 0, games: 0, state: "", until: 0, updated: false}   ; (the update check while the loading screen plays)
 
@@ -121,6 +122,44 @@ Lerp(id, target, sp)
     return v
 }
 
+; the round tick of a game card: pops in filled with the gradient colour, the check mark draws itself, a ripple spreads out
+DrawTick(cx, cy, sv, on, age, c)
+{
+    global NLAlphaPage
+    a0 := NLAlphaPage
+    if (age < 520) {                                                      ; ripple
+        u := age / 520
+        r := 9 + 17 * (1 - (1 - u) ** 3)
+        NLRRLine(cx - r, cy - r, 2 * r, 2 * r, r, NLC(c[1], c[2], c[3], Round(170 * (1 - u))))
+    }
+    NLDisc(cx, cy, 9, P("bg"))
+    NLRRLine(cx - 9, cy - 9, 18, 18, 9, sv > 0.5 ? NLC(c[1], c[2], c[3]) : P("muted"))
+    if (on) {
+        u := Min(1.0, age / 320)
+        rad := 9 * (1 + 2.70158 * (u - 1) ** 3 + 1.70158 * (u - 1) ** 2)  ; (pops a little past full size, then settles)
+        pc := Min(1.0, Max(0, (age - 110) / 300))
+    } else
+        rad := 9 * sv, pc := 1.0
+    if (rad < 0.4)
+        return
+    NLDisc(cx, cy, rad, NLC(c[1], c[2], c[3]))
+    if (pc <= 0)
+        return
+    NLAlphaPage := a0 * (on ? 1 : sv)
+    k := Min(1.0, rad / 9)                                                ; (the check shrinks together with its circle)
+    ax := cx - 4.3 * k, ay := cy + 0.2 * k, bx := cx - 1.4 * k, by := cy + 3.2 * k, ex := cx + 4.4 * k, ey := cy - 3.3 * k
+    l1 := Sqrt((bx - ax) ** 2 + (by - ay) ** 2), l2 := Sqrt((ex - bx) ** 2 + (ey - by) ** 2)
+    d := pc * (l1 + l2), w := NLC(255, 255, 255)
+    if (d <= l1)
+        NLLineW(ax, ay, ax + (bx - ax) * d / l1, ay + (by - ay) * d / l1, w, 2.3 * k)
+    else {
+        NLLineW(ax, ay, bx, by, w, 2.3 * k)
+        f := (d - l1) / l2
+        NLLineW(bx, by, bx + (ex - bx) * f, by + (ey - by) * f, w, 2.3 * k)
+    }
+    NLAlphaPage := a0
+}
+
 AddHit(id, x, y, w, h) => HitsNext.Push({id: id, x: x, y: y, w: w, h: h})
 
 Frame()
@@ -188,16 +227,19 @@ Frame()
         y := 232 + (i - 1) * step, my := y + ch / 2
         on := (i = Sel)
         hg := Lerp("g" i, HoverId = "g" i ? 1 : 0, 0.25)
-        NLRR(rx, y, rw, ch, 14, on ? P("cardSel") : P("card"))
-        if (on)
-            SPGradBorder(rx, y, rw, ch, 14, AUR, t * 0.3, 1.6)
-        else if (hg > 0.02)
-            NLRRLine(rx, y, rw, ch, 14, P("line"))
+        sv := Lerp("s" i, on ? 1 : 0, 0.16)                               ; (selected 0..1, eased: the card fades between the two looks)
+        age := on ? A_TickCount - SelT : 99999                            ; (ms since this card was clicked)
+        NLRR(rx, y, rw, ch, 14, P("card"))
+        NLAlphaPage := e * sv
+        NLRR(rx, y, rw, ch, 14, P("cardSel"))
+        SPGradBorder(rx, y, rw, ch, 14, AUR, t * 0.3, 1.6)
+        NLAlphaPage := e * (1 - sv) * hg
+        NLRRLine(rx, y, rw, ch, 14, P("line"))
+        NLAlphaPage := e
+        if (age < 450)                                                    ; (a short light flash on the clicked card)
+            NLRR(rx, y, rw, ch, 14, NLC(255, 255, 255, Round(34 * (1 - age / 450))))
         c := SPStopsSample(AUR, t * 0.2)
-        NLDisc(rx + 26, my, 9, P("bg"))
-        NLRRLine(rx + 17, my - 9, 18, 18, 9, on ? NLC(c[1], c[2], c[3]) : P("muted"))
-        if (on)
-            NLDisc(rx + 26, my, 4.5 + 0.8 * Sin(t * 3), NLC(c[1], c[2], c[3]))
+        DrawTick(rx + 26, my, sv, on, age, c)
         if (ch >= 44) {
             NLText(gm.name, rx + 50, my - 22, P("text"), FMid, rw - 60, 26, 0, 1)
             NLText(gm.sub, rx + 50, my + 3, P("muted"), FTxt, rw - 60, 20, 0, 1)
@@ -374,7 +416,7 @@ Present(alpha, w := 0, h := 0)
 ; ---------------- input ----------------
 OnDown(wParam, lParam, msg, hwnd)
 {
-    global LG, HoverId, Dark, Sel, GAMES, Busy, Hits
+    global LG, HoverId, Dark, Sel, GAMES, Busy, Hits, SelT
     if (hwnd != LG.Hwnd)
         return
     global SplashOn, SplashT0, SPLASH_MS
@@ -404,7 +446,7 @@ OnDown(wParam, lParam, msg, hwnd)
             return 0
         default:
             if (SubStr(HoverId, 1, 1) = "g") {
-                Sel := Integer(SubStr(HoverId, 2))
+                Sel := Integer(SubStr(HoverId, 2)), SelT := A_TickCount      ; (plays the tick animation)
                 return 0
             }
     }
