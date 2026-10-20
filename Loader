@@ -31,7 +31,7 @@ Global SrcDir := ""                    ; (test only, with debug.on: /src=<folder
 
 ; online only: the macro and the games list are downloaded every time (always the newest), nothing is saved
 ; the list of games comes from games.txt on GitHub (one line per game: name|subtitle|raw link), this one is only shown until it is there
-Global GAMES := [{name: "Evade", sub: "M0MENT4M Movement Macro", url: REPO "M0MENT4M%202.0"}]
+Global GAMES := [{name: "Evade", sub: "M0MENT4M Movement Macro", url: REPO "M0MENT4M"}]
 Global LastGame := ""
 Global SplashOn := true, SplashT0 := A_TickCount, SPLASH_MS := 3200, SplashEnd := 0
 Global SelT := 0                       ; (when a game card was clicked: the tick animation)
