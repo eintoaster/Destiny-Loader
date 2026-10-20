@@ -270,7 +270,6 @@ Frame()
     AddHit("go", rx, by, rw, 50)
     if (StatusTxt != "")
         NLText(StatusTxt, rx, by + 60, StatusCol ? StatusCol : P("muted"), FTxt, rw, 40, 1, 0, true)
-    NLText("Macro loader", 28, LH - 34, P("muted"), FTxt, 300, 20, 0, 1)
     NLAlphaPage := 1.0
     Hits := HitsNext
     Present(Round(255 * WinA))
