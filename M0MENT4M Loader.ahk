@@ -15,14 +15,14 @@ try Dark := IniRead(PrefFile, "loader", "dark", "1") = "1"
 
 ; the loader updates 
 Global LOADER_VER := 1
-Global REPO := "https://raw.githubusercontent.com/eintoaster/Macros/refs/heads/main/"           ; (the macro)
+Global REPO := "https://raw.githubusercontent.com/eintoaster/Macros/main/"           ; (the macro)
 Global LREPO := "https://raw.githubusercontent.com/eintoaster/Destiny-Loader/main/"            ; (the loader + games.txt)
 Global LOADER_URL := LREPO "M0MENT4M%20Loader.ahk", GAMES_URL := LREPO "games.txt"
 Global SrcDir := ""                    ; (test only, with debug.on: /src=<folder> reads the "GitHub" files from that folder)
 
 ; online only: the macro and the games list are downloaded every time (always the newest), nothing is saved
 ; the list of games comes from games.txt on GitHub (one line per game: name|subtitle|raw link), this one is only shown until it is there
-Global GAMES := [{name: "Evade", sub: "Movement Macro", url: REPO "M0MENT4M%202.0.ahk"}]
+Global GAMES := [{name: "Evade", sub: "Movement Macro", url: REPO "M0MENT4M%202.0"}]
 Global LastGame := ""
 Global SplashOn := true, SplashT0 := A_TickCount, SPLASH_MS := 3200, SplashEnd := 0
 Global Sel := 1, StatusTxt := "", StatusCol := 0, BtnTxt := "launch", Busy := false
@@ -414,6 +414,12 @@ QuickStart()
 {
     global GAMES_URL, LastGame, GAMES, Sel
     LoadGames(HttpGetText(GAMES_URL), LastGame)
+    if (LastGame != "" && GAMES[Sel].name != LastGame) {               ; (not in the list: the saved link of the game that was running)
+        url := ""
+        try url := IniRead(PrefFile, "loader", "url", "")
+        if (SubStr(url, 1, 8) = "https://")
+            return Launch({name: LastGame, sub: "", url: url})
+    }
     Launch(GAMES[Sel])
 }
 
@@ -423,7 +429,7 @@ Launch(gm)
     Busy := true
     BtnTxt := "downloading..."
     Status("getting the newest " gm.name " macro from GitHub")
-    try DirCreate(AppDir "\M0MENT4M\configs"), IniWrite(gm.name, PrefFile, "loader", "game")                 ; (a reload starts the same game again)
+    try DirCreate(AppDir "\M0MENT4M\configs"), IniWrite(gm.name, PrefFile, "loader", "game"), IniWrite(gm.url, PrefFile, "loader", "url")                 ; (a reload starts the same game again)
     code := HttpGetText(gm.url)
     if (!InStr(SubStr(code, 1, 200), "#Requires AutoHotkey v2")) {
         BtnTxt := "launch", Busy := false
