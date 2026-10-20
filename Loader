@@ -1,6 +1,6 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
-; M0MENT4M loader: pick a game, the newest macro is downloaded from GitHub and started.
+; Destiny loader: pick a game, the newest macro is downloaded from GitHub and started.
 
 Global NLToken := 0, NLG := 0, NLFmt := 0, NLFmtW := 0, NLAlphaPage := 1.0, NLStyle := "sp"
 Global NLBrushCache := Map(), NLPenCache := Map(), NLPathCache := Map(), NLBrushOld := Map(), NLPenOld := Map(), NLPathOld := Map()
@@ -9,15 +9,17 @@ Global CompBubbleUntil := 0, CompFollow := true, CompScale := 100, CompGui := 0
 
 CoordMode("Mouse", "Screen")          ; (mouse positions on the whole screen, not inside the active window)
 Global AppDir := A_ScriptDir
-Global PrefFile := AppDir "\M0MENT4M\configs\loader.ini"
+Global PrefFile := AppDir "\Destiny\configs\loader.ini"
+if (!FileExist(PrefFile) && FileExist(AppDir "\M0MENT4M\configs\loader.ini"))      ; (settings from the older loader)
+    try DirCreate(AppDir "\Destiny\configs"), FileCopy(AppDir "\M0MENT4M\configs\loader.ini", PrefFile)
 Global Dark := true
 try Dark := IniRead(PrefFile, "loader", "dark", "1") = "1"
 
 ; the loader updates 
-Global LOADER_VER := 1
+Global LOADER_VER := 2
 Global REPO := "https://raw.githubusercontent.com/eintoaster/Macros/main/"           ; (the macro)
 Global LREPO := "https://raw.githubusercontent.com/eintoaster/Destiny-Loader/main/"            ; (the loader + games.txt)
-Global LOADER_URL := LREPO "M0MENT4M%20Loader.ahk", GAMES_URL := LREPO "games.txt"
+Global LOADER_URL := LREPO "Destiny%20Loader.ahk", GAMES_URL := LREPO "games.txt"
 Global SrcDir := ""                    ; (test only, with debug.on: /src=<folder> reads the "GitHub" files from that folder)
 
 ; online only: the macro and the games list are downloaded every time (always the newest), nothing is saved
@@ -41,7 +43,7 @@ Global FSmall := NLMakeFont("Segoe UI", 11, 1)
 Global FBtn := NLMakeFont("Segoe UI", 15, 1)
 Global FIcon := NLMakeFont("Segoe UI Symbol", 17, 0)
 
-LG := Gui("-Caption +ToolWindow +AlwaysOnTop +E0x80000 -DPIScale", "M0MENT4M Loader")
+LG := Gui("-Caption +ToolWindow +AlwaysOnTop +E0x80000 -DPIScale", "Destiny Loader")
 LG.Show("w" LW " h" LH " Hide")
 MakeSurface()
 class EyeHost {                                   ; Elfaria's eyes follow the mouse: tell her where she sits on screen
@@ -148,9 +150,9 @@ Frame()
     DllCall("gdiplus\GdipScaleWorldTransform", "Ptr", NLG, "Float", ElfS, "Float", ElfS, "Int", 0)
     CompDrawElf(t)
     DllCall("gdiplus\GdipResetWorldTransform", "Ptr", NLG)
-    ; title: M0MENT4M with a moving gradient on every letter
+    ; title: DESTINY with a moving gradient on every letter
     x := 28
-    Loop Parse, "M0MENT4M" {
+    Loop Parse, "DESTINY" {
         c := SPStopsSample(AUR, t * 0.18 - (A_Index - 1) * 0.07)
         NLText(A_LoopField, x, 18, NLC(c[1], c[2], c[3]), FTitle, 40, 34, 0, 1)
         x += NLTextW(A_LoopField, FTitle) * 0.72 + 1
@@ -306,7 +308,7 @@ Splash()
         NLText(A_LoopField, x, 86 + jy, NLC(c[1], c[2], c[3]), FSplash, 44, 44, 0, 1)
         x += NLTextW(A_LoopField, FSplash) * 0.74 + 1
     }
-    NLText("M0MENT4M LOADER", 234, 128, NLC(220, 214, 255, 190), FSplashS, 190, 20, 0, 1)
+    NLText("DESTINY LOADER", 234, 128, NLC(220, 214, 255, 190), FSplashS, 190, 20, 0, 1)
     px := 234, pw := SW - 234 - 26, py := 160
     NLRR(px, py, pw, 8, 4, NLC(255, 255, 255, 28))
     pe := 1 - (1 - u) ** 2
@@ -385,7 +387,7 @@ OnDown(wParam, lParam, msg, hwnd)
         case "theme":
             Dark := !Dark
             try {
-                DirCreate(AppDir "\M0MENT4M\configs")
+                DirCreate(AppDir "\Destiny\configs")
                 IniWrite(Dark ? "1" : "0", PrefFile, "loader", "dark")
             }
             return 0
@@ -429,7 +431,7 @@ Launch(gm)
     Busy := true
     BtnTxt := "downloading..."
     Status("getting the newest " gm.name " macro from GitHub")
-    try DirCreate(AppDir "\M0MENT4M\configs"), IniWrite(gm.name, PrefFile, "loader", "game"), IniWrite(gm.url, PrefFile, "loader", "url")                 ; (a reload starts the same game again)
+    try DirCreate(AppDir "\Destiny\configs"), IniWrite(gm.name, PrefFile, "loader", "game"), IniWrite(gm.url, PrefFile, "loader", "url")                 ; (a reload starts the same game again)
     code := HttpGetText(gm.url)
     if (!InStr(SubStr(code, 1, 200), "#Requires AutoHotkey v2")) {
         BtnTxt := "launch", Busy := false
