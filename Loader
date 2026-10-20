@@ -15,11 +15,12 @@ if (!FileExist(PrefFile) && FileExist(AppDir "\M0MENT4M\configs\loader.ini"))   
 Global Dark := true
 try Dark := IniRead(PrefFile, "loader", "dark", "1") = "1"
 
-; the loader updates 
-Global LOADER_VER := 2
+; the loader updates itself: when the Loader file on GitHub is different from this file, it replaces this file and restarts
 Global REPO := "https://raw.githubusercontent.com/eintoaster/Macros/main/"           ; (the macro)
 Global LREPO := "https://raw.githubusercontent.com/eintoaster/Destiny-Loader/main/"            ; (the loader + games.txt)
-Global LOADER_URL := LREPO "Destiny%20Loader.ahk", GAMES_URL := LREPO "games.txt"
+Global GAMES_URL := LREPO "games.txt"
+Global LOADER_API := "https://api.github.com/repos/eintoaster/Destiny-Loader/contents/Loader"   ; (always the newest upload)
+Global LOADER_RAW := LREPO "Loader"                                                             ; (the raw link can lag a few minutes: only a backup)
 Global SrcDir := ""                    ; (test only, with debug.on: /src=<folder> reads the "GitHub" files from that folder)
 
 ; online only: the macro and the games list are downloaded every time (always the newest), nothing is saved
@@ -471,7 +472,7 @@ WriteText(path, txt, enc := "UTF-8-RAW")
 }
 
 ; starts a download without waiting (the window keeps animating); HttpDone tells when it is there
-HttpStart(url)
+HttpStart(url, accept := "")
 {
     global SrcDir
     if (SrcDir != "")                                                     ; (test: the "GitHub" files come from a folder)
@@ -480,6 +481,8 @@ HttpStart(url)
         req := ComObject("WinHttp.WinHttpRequest.5.1")
         req.SetTimeouts(3000, 3000, 3000, 4000)
         req.Open("GET", url "?t=" A_TickCount, true)
+        if (accept != "")
+            req.SetRequestHeader("Accept", accept)
         req.Send()
         return {req: req}
     }
@@ -541,25 +544,26 @@ LoadGames(txt, pick := "")
     return true
 }
 
-; the version number inside a downloaded loader (0 = not a loader / broken download)
-LoaderVer(code)
-{
-    if (!InStr(SubStr(code, 1, 200), "#Requires AutoHotkey v2") || !InStr(code, "UpdStart(") || !InStr(code, "RunFromMemory("))
-        return 0
-    return RegExMatch(code, "m)^Global LOADER_VER := (\d+)", &m) ? Integer(m[1]) : 0
-}
+; a downloaded file that really is a loader (not an error page or a broken download)
+IsLoader(code) => InStr(SubStr(code, 1, 200), "#Requires AutoHotkey v2") && InStr(code, "UpdStart(") && InStr(code, "RunFromMemory(")
+
+; the same text no matter how GitHub stores it (line endings, BOM, spaces at the end)
+NormCode(code) => RTrim(StrReplace(LTrim(code, Chr(0xFEFF)), "`r"), " `t`n")
 
 UpdStart()
 {
-    global Upd, LOADER_URL, GAMES_URL, SPLASH_MS
+    global Upd, LOADER_API, GAMES_URL, SPLASH_MS
     Upd.state := "check", Upd.until := A_TickCount + SPLASH_MS + 2500
     Upd.games := HttpStart(GAMES_URL)
-    Upd.loader := Upd.updated ? 0 : HttpStart(LOADER_URL)                ; (just updated: no second check)
+    Upd.loader := Upd.updated ? 0 : HttpStart(LOADER_API, "application/vnd.github.raw")   ; (just updated: no second check)
+    Upd.raw := false
+    if (FileExist(A_ScriptDir "\debug.on") && SrcDir = "")              ; (your own working copy: never overwritten while you edit it)
+        Upd.loader := 0
 }
 
 UpdPoll()
 {
-    global Upd, LOADER_VER, LastGame
+    global Upd, LastGame, LOADER_RAW
     if (Upd.state = "apply") {
         if (A_TickCount >= Upd.until)
             ApplyUpdate()
@@ -573,7 +577,10 @@ UpdPoll()
     }
     if (IsObject(Upd.loader) && HttpDone(Upd.loader, &lt)) {
         Upd.loader := 0
-        if (LoaderVer(lt) > LOADER_VER) {
+        if (!IsLoader(lt) && !Upd.raw) {                                   ; (GitHub's API did not answer: try the raw link)
+            Upd.raw := true
+            Upd.loader := HttpStart(LOADER_RAW)
+        } else if (IsLoader(lt) && NormCode(lt) != NormCode(FileText(A_ScriptFullPath))) {
             Upd.state := "apply", Upd.code := lt, Upd.until := A_TickCount + 900
             return
         }
