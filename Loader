@@ -431,7 +431,7 @@ Launch(gm)
     global BtnTxt, Busy
     Busy := true
     BtnTxt := "downloading..."
-    Status("getting the newest " gm.name " macro from GitHub")
+    Status("getting the latest version")
     try DirCreate(AppDir "\Destiny\configs"), IniWrite(gm.name, PrefFile, "loader", "game"), IniWrite(gm.url, PrefFile, "loader", "url")                 ; (a reload starts the same game again)
     code := HttpGetText(gm.url)
     if (!InStr(SubStr(code, 1, 200), "#Requires AutoHotkey v2")) {
