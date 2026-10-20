@@ -1,4 +1,4 @@
-﻿#Requires AutoHotkey v2.0
+#Requires AutoHotkey v2.0
 #SingleInstance Force
 ; M0MENT4M loader: pick a game, the newest macro is downloaded from GitHub and started.
 
@@ -15,14 +15,15 @@ try Dark := IniRead(PrefFile, "loader", "dark", "1") = "1"
 
 ; the loader updates 
 Global LOADER_VER := 1
-Global REPO := "https://raw.githubusercontent.com/eintoaster/m0ment4m/refs/heads/main/"
-Global LOADER_URL := REPO "M0MENT4M%20Loader.ahk", GAMES_URL := REPO "games.txt"
+Global REPO := "https://raw.githubusercontent.com/eintoaster/Macros/refs/heads/main/"           ; (the macro)
+Global LREPO := "https://raw.githubusercontent.com/eintoaster/Destiny-Loader/main/"            ; (the loader + games.txt)
+Global LOADER_URL := LREPO "M0MENT4M%20Loader.ahk", GAMES_URL := LREPO "games.txt"
 Global SrcDir := ""                    ; (test only, with debug.on: /src=<folder> reads the "GitHub" files from that folder)
 
-; the macro is downloaded every time (always the newest); the last download is kept for when there is no internet
-; the list of games comes from games.txt on GitHub (one line per game: name|subtitle|raw link), this one is only the fallback
+; online only: the macro and the games list are downloaded every time (always the newest), nothing is saved
+; the list of games comes from games.txt on GitHub (one line per game: name|subtitle|raw link), this one is only shown until it is there
 Global GAMES := [{name: "Evade", sub: "Movement Macro", url: REPO "M0MENT4M%202.0.ahk"}]
-Global GamesCache := AppDir "\M0MENT4M\tools\games.cache"
+Global LastGame := ""
 Global SplashOn := true, SplashT0 := A_TickCount, SPLASH_MS := 3200, SplashEnd := 0
 Global Sel := 1, StatusTxt := "", StatusCol := 0, BtnTxt := "launch", Busy := false
 Global Upd := {loader: 0, games: 0, state: "", until: 0, updated: false}   ; (the update check while the loading screen plays)
@@ -65,16 +66,12 @@ for a in A_Args {
     else if (SubStr(a, 1, 5) = "/src=" && FileExist(A_ScriptDir "\debug.on"))
         SrcDir := SubStr(a, 6)
 }
-LoadGames(FileText(GamesCache))                   ; the last known list right away (works without internet)
-try {
-    last := IniRead(PrefFile, "loader", "game", "")
-    for i, gm in GAMES
-        if (gm.name = last)
-            Sel := i
-}
+for f in ["games.cache", "Evade.cache"]                ; (saved copies from the older loader: not used any more)
+    try FileDelete(AppDir "\M0MENT4M\tools\" f)
+try LastGame := IniRead(PrefFile, "loader", "game", "")
 if (QuickLaunch) {                                ; (a reload from the macro: no loading screen, no update check)
     SplashOn := false
-    SetTimer(() => Launch(GAMES[Sel]), -50)
+    SetTimer(QuickStart, -50)
 } else
     UpdStart()
 
@@ -412,27 +409,26 @@ Status(txt, err := false)
     StatusCol := err ? NLC(229, 72, 77) : 0
 }
 
+; a reload from the macro: get the games list first, then start the same game again
+QuickStart()
+{
+    global GAMES_URL, LastGame, GAMES, Sel
+    LoadGames(HttpGetText(GAMES_URL), LastGame)
+    Launch(GAMES[Sel])
+}
+
 Launch(gm)
 {
     global BtnTxt, Busy
     Busy := true
-    cache := AppDir "\M0MENT4M\tools\" gm.name ".cache"                 ; (offline copy, inside the M0MENT4M folder)
     BtnTxt := "downloading..."
     Status("getting the newest " gm.name " macro from GitHub")
     try DirCreate(AppDir "\M0MENT4M\configs"), IniWrite(gm.name, PrefFile, "loader", "game")                 ; (a reload starts the same game again)
     code := HttpGetText(gm.url)
-    if (InStr(SubStr(code, 1, 200), "#Requires AutoHotkey v2")) {
-        WriteText(cache, code)
-    } else {
-        code := ""
-        try code := FileRead(cache, "UTF-8")
-        if (code = "") {
-            BtnTxt := "launch", Busy := false
-            Status("download failed and there is no saved copy - check your internet", true)
-            return
-        }
-        Status("no connection - starting the saved copy")
-        Sleep(700)
+    if (!InStr(SubStr(code, 1, 200), "#Requires AutoHotkey v2")) {
+        BtnTxt := "launch", Busy := false
+        Status("could not download the macro - check your internet connection", true)
+        return
     }
     BtnTxt := "starting..."
     ; the macro keeps its folder (M0MENT4M) next to the loader, and a reload goes through the loader again
@@ -515,7 +511,7 @@ HttpGetText(url)
 }
 
 ; games.txt: one game per line, name|subtitle|raw link (empty lines and lines starting with # are skipped)
-LoadGames(txt)
+LoadGames(txt, pick := "")
 {
     global GAMES, Sel
     list := []
@@ -529,7 +525,7 @@ LoadGames(txt)
     }
     if (!list.Length)
         return false
-    cur := GAMES[Sel].name
+    cur := pick != "" ? pick : GAMES[Sel].name
     GAMES := list, Sel := 1
     for i, gm in GAMES
         if (gm.name = cur)
@@ -555,7 +551,7 @@ UpdStart()
 
 UpdPoll()
 {
-    global Upd, LOADER_VER, GamesCache
+    global Upd, LOADER_VER, LastGame
     if (Upd.state = "apply") {
         if (A_TickCount >= Upd.until)
             ApplyUpdate()
@@ -565,8 +561,7 @@ UpdPoll()
         return
     if (IsObject(Upd.games) && HttpDone(Upd.games, &gt)) {
         Upd.games := 0
-        if (LoadGames(gt))
-            try WriteText(GamesCache, gt)
+        LoadGames(gt, LastGame)
     }
     if (IsObject(Upd.loader) && HttpDone(Upd.loader, &lt)) {
         Upd.loader := 0
