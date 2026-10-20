@@ -9,9 +9,17 @@ Global CompBubbleUntil := 0, CompFollow := true, CompScale := 100, CompGui := 0
 
 CoordMode("Mouse", "Screen")          ; (mouse positions on the whole screen, not inside the active window)
 Global AppDir := A_ScriptDir
-Global PrefFile := AppDir "\Destiny\configs\loader.ini"
-if (!FileExist(PrefFile) && FileExist(AppDir "\M0MENT4M\configs\loader.ini"))      ; (settings from the older loader)
-    try DirCreate(AppDir "\Destiny\configs"), FileCopy(AppDir "\M0MENT4M\configs\loader.ini", PrefFile)
+; the loader's own settings (dark mode, last game) live in AppData: next to the loader only the folders of the macros you start
+Global PrefDir := A_AppData "\Destiny Loader", PrefFile := PrefDir "\loader.ini"
+for old in [AppDir "\Destiny\configs\loader.ini", AppDir "\M0MENT4M\configs\loader.ini"] {   ; (settings from the older loader: moved)
+    if (FileExist(old)) {
+        if (!FileExist(PrefFile))
+            try DirCreate(PrefDir), FileCopy(old, PrefFile)
+        try FileDelete(old)
+    }
+}
+try DirDelete(AppDir "\Destiny\configs")                      ; (only removed when empty: the older loader's settings folder)
+try DirDelete(AppDir "\Destiny")
 Global Dark := true
 try Dark := IniRead(PrefFile, "loader", "dark", "1") = "1"
 
@@ -25,7 +33,7 @@ Global SrcDir := ""                    ; (test only, with debug.on: /src=<folder
 
 ; online only: the macro and the games list are downloaded every time (always the newest), nothing is saved
 ; the list of games comes from games.txt on GitHub (one line per game: name|subtitle|raw link), this one is only shown until it is there
-Global GAMES := [{name: "Evade", sub: "Movement Macro", url: REPO "M0MENT4M%202.0"}]
+Global GAMES := [{name: "Evade", sub: "M0MENT4M Movement Macro", url: REPO "M0MENT4M%202.0"}]
 Global LastGame := ""
 Global SplashOn := true, SplashT0 := A_TickCount, SPLASH_MS := 3200, SplashEnd := 0
 Global Sel := 1, StatusTxt := "", StatusCol := 0, BtnTxt := "launch", Busy := false
@@ -388,7 +396,7 @@ OnDown(wParam, lParam, msg, hwnd)
         case "theme":
             Dark := !Dark
             try {
-                DirCreate(AppDir "\Destiny\configs")
+                DirCreate(PrefDir)
                 IniWrite(Dark ? "1" : "0", PrefFile, "loader", "dark")
             }
             return 0
@@ -432,7 +440,7 @@ Launch(gm)
     Busy := true
     BtnTxt := "downloading..."
     Status("getting the latest version")
-    try DirCreate(AppDir "\Destiny\configs"), IniWrite(gm.name, PrefFile, "loader", "game"), IniWrite(gm.url, PrefFile, "loader", "url")                 ; (a reload starts the same game again)
+    try DirCreate(PrefDir), IniWrite(gm.name, PrefFile, "loader", "game"), IniWrite(gm.url, PrefFile, "loader", "url")                 ; (a reload starts the same game again)
     code := HttpGetText(gm.url)
     if (!InStr(SubStr(code, 1, 200), "#Requires AutoHotkey v2")) {
         BtnTxt := "launch", Busy := false
