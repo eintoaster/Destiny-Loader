@@ -1,4 +1,4 @@
 # Destiny loader - one game per line: name|subtitle|raw link
-changelog|M0MENT4M updated · TSB macro added
+changelog|M0MENT4M 2.2 Update! · TSB macro added
 Evade|M0MENT4M Movement Macro|https://raw.githubusercontent.com/eintoaster/Macros/main/M0MENT4M
 The Strongest Battlegrounds|Destiny TSB 1.0 (BETA)|https://raw.githubusercontent.com/eintoaster/Macros/main/Destiny%20Tsb
