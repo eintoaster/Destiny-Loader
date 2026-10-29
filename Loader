@@ -31,9 +31,10 @@ Global SrcDir := ""                    ; (test only, with debug.on: /src=<folder
 
 ; online only: the macro and the games list are downloaded every time (always the newest), nothing is saved
 ; the list of games comes from games.txt on GitHub (one line per game: name|subtitle|raw link), this one is only shown until it is there
-Global GAMES := [{name: "Evade", sub: "M0MENT4M Movement Macro", url: REPO "M0MENT4M"}]
+Global GAMES := [{name: "Evade", sub: "M0MENT4M Movement Macro", url: REPO "M0MENT4M"}
+    , {name: "The Strongest Battlegrounds", sub: "Destiny TSB 1.0 (BETA)", url: REPO "Destiny%20Tsb"}]
 Global LastGame := ""
-Global Changelog := ""                 ; (the small changelog line at the top right: "changelog|..." in games.txt)
+Global Changelog := "M0MENT4M 2.2 Update! · TSB Update v1 Beta"   ; (the small changelog line at the top right: "changelog|..." in games.txt)
 Global SplashOn := true, SplashT0 := A_TickCount, SPLASH_MS := 3200, SplashEnd := 0
 Global SelT := 0                       ; (when a game card was clicked: the tick animation)
 Global Sel := 1, StatusTxt := "", StatusCol := 0, BtnTxt := "launch", Busy := false
@@ -42,6 +43,10 @@ Global Upd := {loader: 0, games: 0, state: "", until: 0, updated: false}   ; (th
 Global LW := 820, LH := 520, ElfX := 40, ElfY := 66, ElfS := 1.12
 Global LG, LDC := 0, LBmp := 0, Hits := [], HitsNext := [], HoverId := "", Anim := Map(), T0 := A_TickCount, ThemeT := 1.0
 Global AUR := [[16, 185, 129], [34, 211, 238], [99, 102, 241], [168, 85, 247]]
+Global COSMIC := [[217, 70, 239], [124, 58, 237], [168, 85, 247], [99, 102, 241]]   ; (Cosmic, like tsb.ahk: D946EF -> 7C3AED)
+
+; each game's colors: TSB is cosmic, everything else aurora
+GameStops(gm) => (InStr(gm.name, "Strongest Battlegrounds") || InStr(gm.name, "TSB")) ? COSMIC : AUR
 Global QuickLaunch := false
 Global FSplash := 0, FSplashJ := 0, FSplashS := 0, Petals := []
 
@@ -243,13 +248,15 @@ Frame()
         NLRR(rx, y, rw, ch, 14, P("card"))
         NLAlphaPage := e * sv
         NLRR(rx, y, rw, ch, 14, P("cardSel"))
-        SPGradBorder(rx, y, rw, ch, 14, AUR, t * 0.3, 1.6)
+        if (GameStops(gm) = COSMIC && sv > 0.01)
+            CosmicCard(rx, y, rw, ch, 14, t)
+        SPGradBorder(rx, y, rw, ch, 14, GameStops(gm), t * 0.3, 1.6)
         NLAlphaPage := e * (1 - sv) * hg
         NLRRLine(rx, y, rw, ch, 14, P("line"))
         NLAlphaPage := e
         if (age < 450)                                                    ; (a short light flash on the clicked card)
             NLRR(rx, y, rw, ch, 14, NLC(255, 255, 255, Round(34 * (1 - age / 450))))
-        c := SPStopsSample(AUR, t * 0.2)
+        c := SPStopsSample(GameStops(gm), t * 0.2)
         DrawTick(rx + 26, my, sv, on, age, c)
         if (ch >= 44) {
             NLText(gm.name, rx + 50, my - 22, P("text"), FMid, rw - 60, 26, 0, 1)
@@ -264,7 +271,7 @@ Frame()
     NLRR(rx, by - 12, rw, 1, 0, P("line"))
     hb := Lerp("bt", HoverId = "go" ? 1 : 0, 0.22)
     pr := (HoverId = "go" && GetKeyState("LButton", "P")) ? 2 : 0
-    SPGradFill(rx, by + pr, rw, 50, 25, AUR, t * 0.25, 1.0)
+    SPGradFill(rx, by + pr, rw, 50, 25, GameStops(GAMES[Sel]), t * 0.25, 1.0)
     NLRR(rx, by + pr, rw, 50, 25, NLC(255, 255, 255, Round(40 * hb)))
     NLText(BtnTxt, rx, by + pr, NLC(255, 255, 255), FBtn, rw, 50, 1, 1)
     AddHit("go", rx, by, rw, 50)
@@ -992,6 +999,62 @@ SPStopsSample(st, pos)
     fr := q - k
     c1 := st[Mod(k, m) + 1], c2 := st[Mod(k + 1, m) + 1]
     return [Round(c1[1] + (c2[1] - c1[1]) * fr), Round(c1[2] + (c2[2] - c1[2]) * fr), Round(c1[3] + (c2[3] - c1[3]) * fr)]
+}
+
+; a soft round glow: bright in the middle, fading out to the edge (rgb: 0xRRGGBB)
+NLGlow(cx, cy, rx, ry, rgb, a)
+{
+    global NLG
+    path := 0, br := 0
+    DllCall("gdiplus\GdipCreatePath", "Int", 0, "Ptr*", &path)
+    DllCall("gdiplus\GdipAddPathEllipse", "Ptr", path, "Float", cx - rx, "Float", cy - ry, "Float", rx * 2, "Float", ry * 2)
+    DllCall("gdiplus\GdipCreatePathGradientFromPath", "Ptr", path, "Ptr*", &br)
+    DllCall("gdiplus\GdipSetPathGradientCenterColor", "Ptr", br, "UInt", NLC(rgb >> 16, (rgb >> 8) & 255, rgb & 255, a))
+    edge := Buffer(4, 0), cnt := 1
+    NumPut("UInt", rgb, edge)                                             ; (the same color, fully see-through)
+    DllCall("gdiplus\GdipSetPathGradientSurroundColorsWithCount", "Ptr", br, "Ptr", edge, "Int*", &cnt)
+    DllCall("gdiplus\GdipFillPath", "Ptr", NLG, "Ptr", br, "Ptr", path)
+    DllCall("gdiplus\GdipDeleteBrush", "Ptr", br)
+    DllCall("gdiplus\GdipDeletePath", "Ptr", path)
+}
+
+; the TSB card when it is picked: deep space, drifting nebula, twinkling stars and a shooting star (like tsb.ahk's welcome screen)
+CosmicCard(x, y, w, h, r, t)
+{
+    global NLG
+    static stars := []
+    if (!stars.Length)
+        Loop 38
+            stars.Push({x: Random(0.0, 1.0), y: Random(0.0, 1.0), z: Random(0.25, 1.0), ph: Random(0.0, 6.28), sz: Random(0.5, 1.5)})
+    DllCall("gdiplus\GdipSetClipPath", "Ptr", NLG, "Ptr", NLPathK(x, y, w, h, r), "Int", 0)
+    NLRR(x, y, w, h, 0, NLC(14, 8, 32, 170))                               ; (deep space)
+    NLGlow(x + w * 0.72 + 18 * Sin(t * 0.5), y + h * 0.35 + 5 * Cos(t * 0.4), 110, 44, 0x6D28D9, 90)
+    NLGlow(x + w * 0.92 + 10 * Cos(t * 0.6), y + h * 0.9, 80, 34, 0xDB2777, 60)
+    NLGlow(x + w * 0.2, y + h * 0.5 + 6 * Sin(t * 0.7), 100, 40, 0x4338CA, 80)
+    NLGlow(x + w * 0.5, y + h * 0.5, 90, 22, 0xA21CAF, Round(40 + 14 * Sin(t * 0.9)))
+    for s in stars {                                                      ; (three depths drifting left, twinkling)
+        sx := x + Mod(s.x * w - t * 12 * s.z + w * 40, w)
+        sy := y + s.y * h
+        a := Round(255 * s.z * (0.55 + 0.45 * Sin(t * (1.2 + s.z * 2) + s.ph)))
+        rad := s.sz * (0.6 + 0.6 * s.z)
+        NLDisc(sx, sy, rad, NLC(235, 230, 255, a))
+        if (s.sz > 1.3 && s.z > 0.7) {                                    ; (the bright ones sparkle)
+            NLLineW(sx - rad * 3, sy, sx + rad * 3, sy, NLC(220, 210, 255, a // 2), 0.8)
+            NLLineW(sx, sy - rad * 3, sx, sy + rad * 3, NLC(220, 210, 255, a // 2), 0.8)
+        }
+    }
+    sp := Mod(t * 1000 + 900, 3200)                                       ; (a shooting star every few seconds)
+    if (sp < 700) {
+        q := sp / 700, fa := Sin(q * 3.1416)
+        hx := x + w + 20 - (w * 0.75) * q, hy := y + 4 + (h - 14) * q
+        Loop 12 {
+            f := A_Index / 12, g := (A_Index + 1) / 12
+            NLLineW(hx + 90 * f, hy - 26 * f * (h / 62), hx + 90 * g, hy - 26 * g * (h / 62), NLC(255, 255, 255, Round(200 * (1 - f) * fa)), 1.5)
+        }
+        NLGlow(hx, hy, 6, 6, 0xF0ABFC, Round(200 * fa))
+        NLDisc(hx, hy, 1.6, NLC(255, 255, 255, Round(255 * fa)))
+    }
+    DllCall("gdiplus\GdipResetClip", "Ptr", NLG)
 }
 
 HWPoly(pts, argb)
