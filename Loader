@@ -1,17 +1,15 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
-; Destiny loader: pick a game, the newest macro is downloaded from GitHub and started.
 
 Global NLToken := 0, NLG := 0, NLFmt := 0, NLFmtW := 0, NLAlphaPage := 1.0, NLStyle := "sp"
 Global NLBrushCache := Map(), NLPenCache := Map(), NLPathCache := Map(), NLBrushOld := Map(), NLPenOld := Map(), NLPathOld := Map()
 Global NLFontUI := 0, NLFontSm := 0, NLFontTitle := 0, NLFontB := 0, NLFontH := 0, NLFontLogo := 0, NLFontIcon := 0
 Global CompBubbleUntil := 0, CompFollow := true, CompScale := 100, CompGui := 0
 
-CoordMode("Mouse", "Screen")          ; (mouse positions on the whole screen, not inside the active window)
+CoordMode("Mouse", "Screen")
 Global AppDir := A_ScriptDir
-; the loader's own settings (dark mode, last game) live in AppData: next to the loader only the folders of the macros you start
 Global PrefDir := A_AppData "\Destiny Loader", PrefFile := PrefDir "\loader.ini"
-for old in [AppDir "\Destiny\configs\loader.ini", AppDir "\M0MENT4M\configs\loader.ini"] {   ; (settings from the older loader: moved)
+for old in [AppDir "\Destiny\configs\loader.ini", AppDir "\M0MENT4M\configs\loader.ini"] {
     if (FileExist(old)) {
         if (!FileExist(PrefFile))
             try DirCreate(PrefDir), FileCopy(old, PrefFile)
@@ -21,31 +19,22 @@ for old in [AppDir "\Destiny\configs\loader.ini", AppDir "\M0MENT4M\configs\load
 Global Dark := true
 try Dark := IniRead(PrefFile, "loader", "dark", "1") = "1"
 
-; the loader updates itself: when the Loader file on GitHub is different from this file, it replaces this file and restarts
-Global REPO := "https://raw.githubusercontent.com/eintoaster/Macros/main/"           ; (the macro)
-Global LREPO := "https://raw.githubusercontent.com/eintoaster/Destiny-Loader/main/"            ; (the loader + games.txt)
-Global GAMES_URL := LREPO "games.txt"
-Global LOADER_API := "https://api.github.com/repos/eintoaster/Destiny-Loader/contents/Loader"   ; (always the newest upload)
-Global LOADER_RAW := LREPO "Loader"                                                             ; (the raw link can lag a few minutes: only a backup)
-Global SrcDir := ""                    ; (test only, with debug.on: /src=<folder> reads the "GitHub" files from that folder)
+LoaderLinks()
 
-; online only: the macro and the games list are downloaded every time (always the newest), nothing is saved
-; the list of games comes from games.txt on GitHub (one line per game: name|subtitle|raw link), this one is only shown until it is there
 Global GAMES := [{name: "Evade", sub: "M0MENT4M Movement Macro", url: REPO "M0MENT4M"}
     , {name: "The Strongest Battlegrounds", sub: "Destiny TSB 1.0 (BETA)", url: REPO "Destiny%20Tsb"}]
 Global LastGame := ""
-Global Changelog := "M0MENT4M 2.2 Update! · TSB Update v1 Beta"   ; (the small changelog line at the top right: "changelog|..." in games.txt)
+Global Changelog := "M0MENT4M 2.2 Update! · TSB Update v1 Beta"
 Global SplashOn := true, SplashT0 := A_TickCount, SPLASH_MS := 3200, SplashEnd := 0
-Global SelT := 0                       ; (when a game card was clicked: the tick animation)
+Global SelT := 0
 Global Sel := 1, StatusTxt := "", StatusCol := 0, BtnTxt := "launch", Busy := false
-Global Upd := {loader: 0, games: 0, state: "", until: 0, updated: false}   ; (the update check while the loading screen plays)
+Global Upd := {loader: 0, games: 0, state: "", until: 0, updated: false}
 
 Global LW := 820, LH := 520, ElfX := 40, ElfY := 66, ElfS := 1.12
 Global LG, LDC := 0, LBmp := 0, Hits := [], HitsNext := [], HoverId := "", Anim := Map(), T0 := A_TickCount, ThemeT := 1.0
 Global AUR := [[16, 185, 129], [34, 211, 238], [99, 102, 241], [168, 85, 247]]
-Global COSMIC := [[217, 70, 239], [124, 58, 237], [168, 85, 247], [99, 102, 241]]   ; (Cosmic, like tsb.ahk: D946EF -> 7C3AED)
+Global COSMIC := [[217, 70, 239], [124, 58, 237], [168, 85, 247], [99, 102, 241]]
 
-; each game's colors: TSB is cosmic, everything else aurora
 GameStops(gm) => (InStr(gm.name, "Strongest Battlegrounds") || InStr(gm.name, "TSB")) ? COSMIC : AUR
 Global QuickLaunch := false
 Global FSplash := 0, FSplashJ := 0, FSplashS := 0, Petals := []
@@ -62,7 +51,7 @@ Global FIcon := NLMakeFont("Segoe UI Symbol", 17, 0)
 LG := Gui("-Caption +ToolWindow +AlwaysOnTop +E0x80000 -DPIScale", "Destiny Loader")
 LG.Show("w" LW " h" LH " Hide")
 MakeSurface()
-class EyeHost {                                   ; Elfaria's eyes follow the mouse: tell her where she sits on screen
+class EyeHost {
     GetPos(&x, &y, &w := 0, &h := 0) {
         global LG, ElfX, ElfY
         LG.GetPos(&gx, &gy)
@@ -83,10 +72,10 @@ for a in A_Args {
     else if (SubStr(a, 1, 5) = "/src=" && FileExist(A_ScriptDir "\debug.on"))
         SrcDir := SubStr(a, 6)
 }
-for f in ["games.cache", "Evade.cache"]                ; (saved copies from the older loader: not used any more)
+for f in ["games.cache", "Evade.cache"]
     try FileDelete(AppDir "\M0MENT4M\tools\" f)
 try LastGame := IniRead(PrefFile, "loader", "game", "")
-if (QuickLaunch) {                                ; (a reload from the macro: no loading screen, no update check)
+if (QuickLaunch) {
     SplashOn := false
     SetTimer(QuickStart, -50)
 } else
@@ -105,7 +94,6 @@ NLGdipInit()
     DllCall("gdiplus\GdipCreateStringFormat", "Int", 0, "Int", 0, "Ptr*", &NLFmtW)
 }
 
-; ---------------- drawing ----------------
 Pal(k)
 {
     global Dark
@@ -128,12 +116,11 @@ Lerp(id, target, sp)
     return v
 }
 
-; the round tick of a game card: pops in filled with the gradient colour, the check mark draws itself, a ripple spreads out
 DrawTick(cx, cy, sv, on, age, c)
 {
     global NLAlphaPage
     a0 := NLAlphaPage
-    if (age < 520) {                                                      ; ripple
+    if (age < 520) {
         u := age / 520
         r := 9 + 17 * (1 - (1 - u) ** 3)
         NLRRLine(cx - r, cy - r, 2 * r, 2 * r, r, NLC(c[1], c[2], c[3], Round(170 * (1 - u))))
@@ -142,7 +129,7 @@ DrawTick(cx, cy, sv, on, age, c)
     NLRRLine(cx - 9, cy - 9, 18, 18, 9, sv > 0.5 ? NLC(c[1], c[2], c[3]) : P("muted"))
     if (on) {
         u := Min(1.0, age / 320)
-        rad := 9 * (1 + 2.70158 * (u - 1) ** 3 + 1.70158 * (u - 1) ** 2)  ; (pops a little past full size, then settles)
+        rad := 9 * (1 + 2.70158 * (u - 1) ** 3 + 1.70158 * (u - 1) ** 2)
         pc := Min(1.0, Max(0, (age - 110) / 300))
     } else
         rad := 9 * sv, pc := 1.0
@@ -152,7 +139,7 @@ DrawTick(cx, cy, sv, on, age, c)
     if (pc <= 0)
         return
     NLAlphaPage := a0 * (on ? 1 : sv)
-    k := Min(1.0, rad / 9)                                                ; (the check shrinks together with its circle)
+    k := Min(1.0, rad / 9)
     ax := cx - 4.3 * k, ay := cy + 0.2 * k, bx := cx - 1.4 * k, by := cy + 3.2 * k, ex := cx + 4.4 * k, ey := cy - 3.3 * k
     l1 := Sqrt((bx - ax) ** 2 + (by - ay) ** 2), l2 := Sqrt((ex - bx) ** 2 + (ey - by) ** 2)
     d := pc * (l1 + l2), w := NLC(255, 255, 255)
@@ -172,7 +159,6 @@ Frame()
 {
     global LG, LDC, LW, LH, NLG, NLAlphaPage, Hits, HitsNext, HoverId, WinA, T0, StatusTxt, StatusCol, BtnTxt, Sel, GAMES, Dark, ElfX, ElfY, ElfS, AUR
     global FTitle, FBig, FMid, FTxt, FSmall, FBtn, FIcon, SplashOn
-    ; hover
     MouseGetPos(&mx, &my, &mw)
     LG.GetPos(&gx, &gy)
     mx -= gx, my -= gy
@@ -191,19 +177,15 @@ Frame()
     WinA := Min(1.0, WinA + 0.09)
     NLAlphaPage := 1.0
     DllCall("gdiplus\GdipGraphicsClear", "Ptr", NLG, "UInt", 0)
-    ; window
     NLRR(0, 0, LW, LH, 22, P("bg"))
     NLRRLine(0, 0, LW, LH, 22, P("edge"))
-    ; soft glow behind Elfaria
     gc := SPStopsSample(AUR, t * 0.05)
     Loop 6
         NLDisc(ElfX + 135, ElfY + 250, 190 - A_Index * 22, NLC(gc[1], gc[2], gc[3], Dark ? 7 : 9))
-    ; Elfaria (the companion, drawn live)
     DllCall("gdiplus\GdipTranslateWorldTransform", "Ptr", NLG, "Float", ElfX, "Float", ElfY, "Int", 0)
     DllCall("gdiplus\GdipScaleWorldTransform", "Ptr", NLG, "Float", ElfS, "Float", ElfS, "Int", 0)
     CompDrawElf(t)
     DllCall("gdiplus\GdipResetWorldTransform", "Ptr", NLG)
-    ; title: DESTINY with a moving gradient on every letter
     x := 28
     Loop Parse, "DESTINY" {
         c := SPStopsSample(AUR, t * 0.18 - (A_Index - 1) * 0.07)
@@ -211,7 +193,6 @@ Frame()
         x += NLTextW(A_LoopField, FTitle) * 0.72 + 1
     }
     NLText("loader", x + 8, 24, P("muted"), FSmall, 80, 24, 0, 1)
-    ; theme + close
     hv := Lerp("th", HoverId = "theme" ? 1 : 0, 0.25)
     NLRR(LW - 98, 18, 34, 34, 10, P("card", Round(255 * hv)))
     NLText(Dark ? Chr(0x263E) : Chr(0x2600), LW - 98, 18, hv > 0.5 ? P("text") : P("muted"), FIcon, 34, 34, 1, 1)
@@ -220,12 +201,11 @@ Frame()
     NLRR(LW - 58, 18, 34, 34, 10, NLC(229, 72, 77, Round(220 * hc)))
     NLText(Chr(0x2715), LW - 58, 18, hc > 0.5 ? NLC(255, 255, 255) : P("muted"), FIcon, 34, 34, 1, 1)
     AddHit("close", LW - 58, 18, 34, 34)
-    ; right column
     rx := 440, rw := LW - 46 - rx
     ti := Min(1.0, t / 0.6), e := 1 - (1 - ti) ** 3
     NLAlphaPage := e
-    if (Changelog != "") {                                                ; (the changelog line from games.txt, in a small pill)
-        clw := NLTextW("changelog:", FSmall), ctw := Min(NLTextW(Changelog, FSmall), rx + rw - 250 - clw - 38)   ; (can grow left, up to the title)
+    if (Changelog != "") {
+        clw := NLTextW("changelog:", FSmall), ctw := Min(NLTextW(Changelog, FSmall), rx + rw - 250 - clw - 38)
         cpw := clw + ctw + 38, cpx := rx + rw - cpw, cpy := 64 + (1 - e) * 8
         NLRR(cpx, cpy, cpw, 26, 13, P("card"))
         NLRRLine(cpx, cpy, cpw, 26, 13, P("line"))
@@ -237,14 +217,14 @@ Frame()
     NLText("welcome back", rx, 108 + (1 - e) * 14, P("text"), FBig, rw, 46, 2, 1)
     NLText("choose your roblox game", rx, 154 + (1 - e) * 10, P("muted"), FTxt, rw, 22, 2, 1)
     NLText("GAMES", rx, 206, P("muted"), FSmall, rw, 18, 2, 1)
-    n := GAMES.Length                                                     ; (more games: smaller cards so everything still fits)
+    n := GAMES.Length
     step := n <= 2 ? 70 : Max(36, Floor(156 / n)), ch := step - 8
     for i, gm in GAMES {
         y := 232 + (i - 1) * step, my := y + ch / 2
         on := (i = Sel)
         hg := Lerp("g" i, HoverId = "g" i ? 1 : 0, 0.25)
-        sv := Lerp("s" i, on ? 1 : 0, 0.16)                               ; (selected 0..1, eased: the card fades between the two looks)
-        age := on ? A_TickCount - SelT : 99999                            ; (ms since this card was clicked)
+        sv := Lerp("s" i, on ? 1 : 0, 0.16)
+        age := on ? A_TickCount - SelT : 99999
         NLRR(rx, y, rw, ch, 14, P("card"))
         NLAlphaPage := e * sv
         NLRR(rx, y, rw, ch, 14, P("cardSel"))
@@ -254,14 +234,14 @@ Frame()
         NLAlphaPage := e * (1 - sv) * hg
         NLRRLine(rx, y, rw, ch, 14, P("line"))
         NLAlphaPage := e
-        if (age < 450)                                                    ; (a short light flash on the clicked card)
+        if (age < 450)
             NLRR(rx, y, rw, ch, 14, NLC(255, 255, 255, Round(34 * (1 - age / 450))))
         c := SPStopsSample(GameStops(gm), t * 0.2)
         DrawTick(rx + 26, my, sv, on, age, c)
         if (ch >= 44) {
             NLText(gm.name, rx + 50, my - 22, P("text"), FMid, rw - 60, 26, 0, 1)
             NLText(gm.sub, rx + 50, my + 3, P("muted"), FTxt, rw - 60, 20, 0, 1)
-        } else {                                                          ; (one line: name left, subtitle right)
+        } else {
             NLText(gm.name, rx + 50, my - 13, P("text"), FMid, rw - 60, 26, 0, 1)
             NLText(gm.sub, rx + 50, my - 10, P("muted"), FTxt, rw - 66, 20, 2, 1)
         }
@@ -282,7 +262,6 @@ Frame()
     Present(Round(255 * WinA))
 }
 
-; ---------------- loading screen (anime style, different from the macro's) ----------------
 SplashInit()
 {
     global FSplash, FSplashJ, FSplashS, Petals, LW, LH
@@ -310,7 +289,7 @@ Splash()
         SplashInit()
         FSplash := NLMakeFont("Segoe UI Black", 30, 0)
     }
-    if (!placed) {                                                          ; a small card in the middle of the screen
+    if (!placed) {
         placed := true
         LG.Move((A_ScreenWidth - SW) // 2, (A_ScreenHeight - SH) // 2, SW, SH)
     }
@@ -318,7 +297,7 @@ Splash()
     static tStart := A_TickCount
     UpdPoll()
     ms := A_TickCount - SplashT0
-    if (Upd.state != "" && ms > SPLASH_MS * 0.9)                         ; (waits for the update check, a few seconds at most)
+    if (Upd.state != "" && ms > SPLASH_MS * 0.9)
         SplashT0 := A_TickCount - SPLASH_MS * 0.9, ms := SPLASH_MS * 0.9
     t := (A_TickCount - tStart) / 1000
     u := Min(1.0, ms / SPLASH_MS)
@@ -401,7 +380,7 @@ Splash()
             T0 := A_TickCount
             CompBubbleUntil := 0
             WinA := 0.0
-            LG.Move((A_ScreenWidth - LW) // 2, (A_ScreenHeight - LH) // 2, LW, LH)    ; now the full loader
+            LG.Move((A_ScreenWidth - LW) // 2, (A_ScreenHeight - LH) // 2, LW, LH)
         }
     }
     Present(Round(255 * WinA), SW, SH)
@@ -430,7 +409,6 @@ Present(alpha, w := 0, h := 0)
     DllCall("UpdateLayeredWindow", "Ptr", LG.Hwnd, "Ptr", 0, "Ptr", 0, "Ptr", sz, "Ptr", LDC, "Ptr", src, "UInt", 0, "Ptr", bf, "UInt", 2)
 }
 
-; ---------------- input ----------------
 OnDown(wParam, lParam, msg, hwnd)
 {
     global LG, HoverId, Dark, Sel, GAMES, Busy, Hits, SelT
@@ -438,10 +416,9 @@ OnDown(wParam, lParam, msg, hwnd)
         return
     global SplashOn, SplashT0, SPLASH_MS
     if (SplashOn) {
-        SplashT0 := Min(SplashT0, A_TickCount - SPLASH_MS)                  ; (a click skips the loading screen)
+        SplashT0 := Min(SplashT0, A_TickCount - SPLASH_MS)
         return
     }
-    ; what was clicked: from the click position itself
     cx := lParam & 0xFFFF, cy := (lParam >> 16) & 0xFFFF
     HoverId := ""
     for h in Hits
@@ -463,11 +440,11 @@ OnDown(wParam, lParam, msg, hwnd)
             return 0
         default:
             if (SubStr(HoverId, 1, 1) = "g") {
-                Sel := Integer(SubStr(HoverId, 2)), SelT := A_TickCount      ; (plays the tick animation)
+                Sel := Integer(SubStr(HoverId, 2)), SelT := A_TickCount
                 return 0
             }
     }
-    PostMessage(0xA1, 2, , , "ahk_id " LG.Hwnd)                     ; drag the window
+    PostMessage(0xA1, 2, , , "ahk_id " LG.Hwnd)
 }
 
 Status(txt, err := false)
@@ -477,12 +454,11 @@ Status(txt, err := false)
     StatusCol := err ? NLC(229, 72, 77) : 0
 }
 
-; a reload from the macro: get the games list first, then start the same game again
 QuickStart()
 {
     global GAMES_URL, LastGame, GAMES, Sel
     LoadGames(FreshText(GAMES_URL), LastGame)
-    if (LastGame != "" && GAMES[Sel].name != LastGame) {               ; (not in the list: the saved link of the game that was running)
+    if (LastGame != "" && GAMES[Sel].name != LastGame) {
         url := ""
         try url := IniRead(PrefFile, "loader", "url", "")
         if (SubStr(url, 1, 8) = "https://")
@@ -497,7 +473,7 @@ Launch(gm)
     Busy := true
     BtnTxt := "downloading..."
     Status("getting the latest version")
-    try DirCreate(PrefDir), IniWrite(gm.name, PrefFile, "loader", "game"), IniWrite(gm.url, PrefFile, "loader", "url")                 ; (a reload starts the same game again)
+    try DirCreate(PrefDir), IniWrite(gm.name, PrefFile, "loader", "game"), IniWrite(gm.url, PrefFile, "loader", "url")
     code := FreshText(gm.url)
     if (!InStr(SubStr(code, 1, 200), "#Requires AutoHotkey v2")) {
         BtnTxt := "launch", Busy := false
@@ -505,7 +481,6 @@ Launch(gm)
         return
     }
     BtnTxt := "starting..."
-    ; the macro keeps its folder (M0MENT4M) next to the loader, and a reload goes through the loader again
     p := InStr(code, "`n")
     head := "Global M0MLoaderDir := " Quote(AppDir) "`nGlobal M0MLoaderPath := " Quote(A_ScriptFullPath) "`n"
     code := SubStr(code, 1, p) head SubStr(code, p + 1)
@@ -520,7 +495,6 @@ Launch(gm)
 
 Quote(s) => '"' StrReplace(s, '"', '""') '"'
 
-; ---------------- downloads, the games list and the loader's own update ----------------
 FileText(path)
 {
     try return FileRead(path, "UTF-8")
@@ -536,11 +510,10 @@ WriteText(path, txt, enc := "UTF-8-RAW")
     fo.Close()
 }
 
-; starts a download without waiting (the window keeps animating); HttpDone tells when it is there
 HttpStart(url, accept := "")
 {
     global SrcDir
-    if (SrcDir != "")                                                     ; (test: the "GitHub" files come from a folder)
+    if (SrcDir != "")
         return {text: FileText(SrcDir "\" StrReplace(RegExReplace(RegExReplace(url, "\?.*"), ".*/"), "%20", " "))}
     try {
         req := ComObject("WinHttp.WinHttpRequest.5.1")
@@ -568,7 +541,7 @@ HttpDone(h, &text)
             body := h.req.ResponseBody
             n := body.MaxIndex() + 1
             buf := Buffer(n)
-            pv := NumGet(ComObjValue(body) + 8 + A_PtrSize, "Ptr")        ; (the SAFEARRAY's data)
+            pv := NumGet(ComObjValue(body) + 8 + A_PtrSize, "Ptr")
             DllCall("RtlMoveMemory", "Ptr", buf, "Ptr", pv, "UPtr", n)
             text := StrGet(buf, n, "UTF-8")
         }
@@ -586,7 +559,6 @@ HttpGetText(url, accept := "")
     return text
 }
 
-; GitHub's raw links can show an old file for a few minutes after an upload: the same file through GitHub's API is always the newest
 RawToApi(url) => RegExMatch(url, "i)^https://raw\.githubusercontent\.com/([^/]+)/([^/]+)/(?:refs/heads/)?([^/]+)/(.+)$", &m)
     ? "https://api.github.com/repos/" m[1] "/" m[2] "/contents/" m[4] "?ref=" m[3] : ""
 
@@ -594,10 +566,9 @@ FreshText(url)
 {
     if ((api := RawToApi(url)) != "" && (text := HttpGetText(api, "application/vnd.github.raw")) != "")
         return text
-    return HttpGetText(url)                                               ; (the API did not answer: the raw link)
+    return HttpGetText(url)
 }
 
-; games.txt: one game per line, name|subtitle|raw link (empty lines and lines starting with # are skipped)
 LoadGames(txt, pick := "")
 {
     global GAMES, Sel, Changelog
@@ -625,10 +596,8 @@ LoadGames(txt, pick := "")
     return true
 }
 
-; a downloaded file that really is a loader (not an error page or a broken download)
 IsLoader(code) => InStr(SubStr(code, 1, 200), "#Requires AutoHotkey v2") && InStr(code, "UpdStart(") && InStr(code, "RunFromMemory(")
 
-; the same text no matter how GitHub stores it (line endings, BOM, spaces at the end)
 NormCode(code) => RTrim(StrReplace(LTrim(code, Chr(0xFEFF)), "`r"), " `t`n")
 
 UpdStart()
@@ -636,9 +605,9 @@ UpdStart()
     global Upd, LOADER_API, GAMES_URL, SPLASH_MS
     Upd.state := "check", Upd.until := A_TickCount + SPLASH_MS + 2500
     Upd.games := HttpStart(RawToApi(GAMES_URL), "application/vnd.github.raw"), Upd.graw := false
-    Upd.loader := Upd.updated ? 0 : HttpStart(LOADER_API, "application/vnd.github.raw")   ; (just updated: no second check)
+    Upd.loader := Upd.updated ? 0 : HttpStart(LOADER_API, "application/vnd.github.raw")
     Upd.raw := false
-    if (FileExist(A_ScriptDir "\debug.on") && SrcDir = "")              ; (your own working copy: never overwritten while you edit it)
+    if (FileExist(A_ScriptDir "\debug.on") && SrcDir = "")
         Upd.loader := 0
 }
 
@@ -654,12 +623,12 @@ UpdPoll()
         return
     if (IsObject(Upd.games) && HttpDone(Upd.games, &gt)) {
         Upd.games := 0
-        if (!LoadGames(gt) && !Upd.graw)                                   ; (always opens on the first game, Evade; GitHub's API did not answer: try the raw link)
+        if (!LoadGames(gt) && !Upd.graw)
             Upd.graw := true, Upd.games := HttpStart(GAMES_URL)
     }
     if (IsObject(Upd.loader) && HttpDone(Upd.loader, &lt)) {
         Upd.loader := 0
-        if (!IsLoader(lt) && !Upd.raw) {                                   ; (GitHub's API did not answer: try the raw link)
+        if (!IsLoader(lt) && !Upd.raw) {
             Upd.raw := true
             Upd.loader := HttpStart(LOADER_RAW)
         } else if (IsLoader(lt) && NormCode(lt) != NormCode(FileText(A_ScriptFullPath))) {
@@ -671,7 +640,6 @@ UpdPoll()
         Upd.state := ""
 }
 
-; the new loader replaces this file and starts; when anything goes wrong this version just keeps running
 ApplyUpdate()
 {
     global Upd
@@ -692,7 +660,6 @@ ApplyUpdate()
     ExitApp
 }
 
-; starts AutoHotkey with the script handed over on its standard input (no file is written)
 RunFromMemory(code)
 {
     sa := Buffer(24, 0)
@@ -700,11 +667,11 @@ RunFromMemory(code)
     hRead := 0, hWrite := 0
     if !DllCall("CreatePipe", "Ptr*", &hRead, "Ptr*", &hWrite, "Ptr", sa, "UInt", 0)
         return false
-    DllCall("SetHandleInformation", "Ptr", hWrite, "UInt", 1, "UInt", 0)        ; (only the read end is inherited)
+    DllCall("SetHandleInformation", "Ptr", hWrite, "UInt", 1, "UInt", 0)
     si := Buffer(A_PtrSize = 8 ? 104 : 68, 0)
     NumPut("UInt", si.Size, si, 0)
-    NumPut("UInt", 0x100, si, A_PtrSize = 8 ? 60 : 44)                        ; STARTF_USESTDHANDLES
-    NumPut("Ptr", hRead, si, A_PtrSize = 8 ? 80 : 56)                          ; hStdInput
+    NumPut("UInt", 0x100, si, A_PtrSize = 8 ? 60 : 44)
+    NumPut("Ptr", hRead, si, A_PtrSize = 8 ? 80 : 56)
     pi := Buffer(A_PtrSize * 2 + 8, 0)
     cmd := '"' A_AhkPath '" /CP65001 *'
     ok := DllCall("CreateProcessW", "Ptr", 0, "Str", cmd, "Ptr", 0, "Ptr", 0, "Int", 1, "UInt", 0, "Ptr", 0, "Str", AppDir, "Ptr", si, "Ptr", pi)
@@ -741,10 +708,6 @@ Quit(*)
 
 Esc::Quit()
 
-
-
-; ===== drawing helpers taken from M0MENT4M 2.0 (the same look as the macro) =====
-
 NLMakeFont(name, px, style)
 {
     fam := 0, font := 0
@@ -778,7 +741,7 @@ NLCacheAge(cur, old, delFn)
     pc := A_IsCritical
     Critical
     for k, h in old {
-        if (!cur.Has(k))                  ; (a handle that was promoted back into the current cache is still in use)
+        if (!cur.Has(k))
             DllCall(delFn, "Ptr", h)
     }
     old.Clear()
@@ -878,8 +841,6 @@ NLText(str, x, y, argb, font, w := 0, h := 0, ha := 0, va := 0, wrap := false)
     static lastA := Map(), lastV := Map(), rc := Buffer(16, 0)
     if (str = "")
         return
-    ; the menu, the HUDs, the widgets and the companion all draw on their own timers and share the string format and this
-    ; rectangle: nothing may interrupt between setting them and drawing
     pc := A_IsCritical
     Critical
     fmt := wrap ? NLFmtW : NLFmt
@@ -945,7 +906,7 @@ SPGradTable(stops, a)
         NumPut("UInt", (a << 24) | (c[1] << 16) | (c[2] << 8) | c[3], cols, (A_Index - 1) * 4)
         NumPut("Float", (A_Index - 1) / m, pos, (A_Index - 1) * 4)
     }
-    cache[key] := {m: m, n: n, cols: cols, pos: pos, stops: stops}      ; (the list is kept alive: its address is the key)
+    cache[key] := {m: m, n: n, cols: cols, pos: pos, stops: stops}
     return cache[key]
 }
 
@@ -1001,7 +962,6 @@ SPStopsSample(st, pos)
     return [Round(c1[1] + (c2[1] - c1[1]) * fr), Round(c1[2] + (c2[2] - c1[2]) * fr), Round(c1[3] + (c2[3] - c1[3]) * fr)]
 }
 
-; a soft round glow: bright in the middle, fading out to the edge (rgb: 0xRRGGBB)
 NLGlow(cx, cy, rx, ry, rgb, a)
 {
     global NLG
@@ -1011,14 +971,13 @@ NLGlow(cx, cy, rx, ry, rgb, a)
     DllCall("gdiplus\GdipCreatePathGradientFromPath", "Ptr", path, "Ptr*", &br)
     DllCall("gdiplus\GdipSetPathGradientCenterColor", "Ptr", br, "UInt", NLC(rgb >> 16, (rgb >> 8) & 255, rgb & 255, a))
     edge := Buffer(4, 0), cnt := 1
-    NumPut("UInt", rgb, edge)                                             ; (the same color, fully see-through)
+    NumPut("UInt", rgb, edge)
     DllCall("gdiplus\GdipSetPathGradientSurroundColorsWithCount", "Ptr", br, "Ptr", edge, "Int*", &cnt)
     DllCall("gdiplus\GdipFillPath", "Ptr", NLG, "Ptr", br, "Ptr", path)
     DllCall("gdiplus\GdipDeleteBrush", "Ptr", br)
     DllCall("gdiplus\GdipDeletePath", "Ptr", path)
 }
 
-; the TSB card when it is picked: deep space, drifting nebula, twinkling stars and a shooting star (like tsb.ahk's welcome screen)
 CosmicCard(x, y, w, h, r, t)
 {
     global NLG
@@ -1027,23 +986,23 @@ CosmicCard(x, y, w, h, r, t)
         Loop 38
             stars.Push({x: Random(0.0, 1.0), y: Random(0.0, 1.0), z: Random(0.25, 1.0), ph: Random(0.0, 6.28), sz: Random(0.5, 1.5)})
     DllCall("gdiplus\GdipSetClipPath", "Ptr", NLG, "Ptr", NLPathK(x, y, w, h, r), "Int", 0)
-    NLRR(x, y, w, h, 0, NLC(14, 8, 32, 170))                               ; (deep space)
+    NLRR(x, y, w, h, 0, NLC(14, 8, 32, 170))
     NLGlow(x + w * 0.72 + 18 * Sin(t * 0.5), y + h * 0.35 + 5 * Cos(t * 0.4), 110, 44, 0x6D28D9, 90)
     NLGlow(x + w * 0.92 + 10 * Cos(t * 0.6), y + h * 0.9, 80, 34, 0xDB2777, 60)
     NLGlow(x + w * 0.2, y + h * 0.5 + 6 * Sin(t * 0.7), 100, 40, 0x4338CA, 80)
     NLGlow(x + w * 0.5, y + h * 0.5, 90, 22, 0xA21CAF, Round(40 + 14 * Sin(t * 0.9)))
-    for s in stars {                                                      ; (three depths drifting left, twinkling)
+    for s in stars {
         sx := x + Mod(s.x * w - t * 12 * s.z + w * 40, w)
         sy := y + s.y * h
         a := Round(255 * s.z * (0.55 + 0.45 * Sin(t * (1.2 + s.z * 2) + s.ph)))
         rad := s.sz * (0.6 + 0.6 * s.z)
         NLDisc(sx, sy, rad, NLC(235, 230, 255, a))
-        if (s.sz > 1.3 && s.z > 0.7) {                                    ; (the bright ones sparkle)
+        if (s.sz > 1.3 && s.z > 0.7) {
             NLLineW(sx - rad * 3, sy, sx + rad * 3, sy, NLC(220, 210, 255, a // 2), 0.8)
             NLLineW(sx, sy - rad * 3, sx, sy + rad * 3, NLC(220, 210, 255, a // 2), 0.8)
         }
     }
-    sp := Mod(t * 1000 + 900, 3200)                                       ; (a shooting star every few seconds)
+    sp := Mod(t * 1000 + 900, 3200)
     if (sp < 700) {
         q := sp / 700, fa := Sin(q * 3.1416)
         hx := x + w + 20 - (w * 0.75) * q, hy := y + 4 + (h - 14) * q
@@ -1111,7 +1070,6 @@ CompDrawElf(t)
 
     HWOval(120, oy + 300, 50 - bob, 7, NLC(0, 0, 0, 50))
 
-    ; very long, wavy hair behind (pale on top, deep blue at the ends), with a few loose locks
     HWOval(120, y0 + 104, 66, 66, CompElfHair(0.1, 0.84))
     for side in [-1, 1] {
         for s in [3, 1, 0] {
@@ -1128,14 +1086,12 @@ CompDrawElf(t)
         }
     }
 
-    ; legs: white boots with gold and brown trim, blue sandals
     for lx in [108, 132] {
         NLLineW(lx, y0 + 248, lx, y0 + 292 - bob, white, 11)
         NLRR(lx - 6, y0 + 252, 12, 4, 1, gold)
         NLRR(lx - 6, y0 + 270, 12, 3, 1, brown)
         HWOval(lx, oy + 296, 11, 6, NLC(112, 132, 234))
     }
-    ; skirt: white with a long hem of brown and gold, a centre panel and a brown side sash
     HWPoly([96, y0 + 172, 144, y0 + 172, 170, y0 + 266, 70, y0 + 266], NLC(238, 240, 253))
     HWPoly([110, y0 + 176, 130, y0 + 176, 138, y0 + 266, 102, y0 + 266], NLC(214, 218, 244))
     NLRR(70, y0 + 258, 100, 8, 3, brown)
@@ -1144,13 +1100,11 @@ CompDrawElf(t)
     NLLineW(151, y0 + 172, 166, y0 + 266, gold, 1.6)
     Loop 4
         NLDisc(160 + A_Index * 3.4, y0 + 200 + A_Index * 17, 2.1, NLC(255, 246, 220))
-    ; strapless bodice, shoulders bare, big gold collar and gem
     NLRR(86, y0 + 150, 20, 14, 7, skin)
     NLRR(134, y0 + 150, 20, 14, 7, skin)
     HWPoly([98, y0 + 160, 142, y0 + 160, 140, y0 + 186, 100, y0 + 186], white)
     HWPoly([94, y0 + 154, 146, y0 + 154, 138, y0 + 164, 102, y0 + 164], gold)
     NLRR(100, y0 + 184, 40, 8, 3, brown)
-    ; diagonal brown strap with a white diamond pattern
     NLLineW(100, y0 + 160, 140, y0 + 186, brown, 6)
     Loop 4
         NLDisc(104 + A_Index * 8.5, y0 + 163 + A_Index * 5.2, 1.6, NLC(255, 246, 220))
@@ -1158,7 +1112,6 @@ CompDrawElf(t)
     HWPoly([120, y0 + 158, 129, y0 + 170, 120, y0 + 184, 111, y0 + 170], gold)
     HWPoly([120, y0 + 161, 126, y0 + 170, 120, y0 + 180, 114, y0 + 170], NLC(48, 138, 242))
     HWPoly([120, y0 + 164, 123.5, y0 + 170, 120, y0 + 175, 116.5, y0 + 170], NLC(170, 220, 255))
-    ; arms with gold bands
     NLLineW(94, y0 + 162, 82, y0 + 214 + 3 * Sin(t * 2.0 + 1), skin, 9)
     NLRR(86, y0 + 172, 9, 5, 2, gold)
     NLDisc(82, y0 + 218 + 3 * Sin(t * 2.0 + 1), 5.5, skin)
@@ -1168,7 +1121,6 @@ CompDrawElf(t)
     NLDisc(166 + 6 * wv, y0 + 194 + 4 * Sin(t * 2.6 + 1.2), 5.5, skin)
     NLRR(112, y0 + 146, 16, 12, 4, skin)
 
-    ; face
     HWOval(120, y0 + 114, 50, 46, skin)
     HWOval(83, y0 + 139, 8, 4.4, NLC(255, 165, 188, 90))
     HWOval(157, y0 + 139, 8, 4.4, NLC(255, 165, 188, 90))
@@ -1194,7 +1146,6 @@ CompDrawElf(t)
         HWOval(ex + ox, y0 + 124 + oyy, 5, 7, NLC(30, 56, 150))
         NLDisc(ex + ox + 3, y0 + 118 + oyy, 3.3, NLC(255, 255, 255))
         NLDisc(ex + ox - 3, y0 + 128 + oyy, 1.7, NLC(255, 255, 255, 210))
-        ; heavy upper lid and lashes for the calm, slightly sharp look
         NLLineW(ex - 12 * e[2], y0 + 112, ex + 11 * e[2], y0 + 109, ink, 3.2)
         NLLineW(ex - 12 * e[2], y0 + 112, ex - 15.5 * e[2], y0 + 115, ink, 2.2)
         NLLineW(ex + 4 * e[2], y0 + 109.6, ex + 9 * e[2], y0 + 106.6, ink, 1.8)
@@ -1206,7 +1157,6 @@ CompDrawElf(t)
         NLLineW(120, y0 + 145, 126, y0 + 142.5, NLC(196, 110, 130), 1.5)
     }
 
-    ; messy hair on top: tufts, spiky bangs, long face-framing locks, an ahoge
     for tf in [[86, 58, -12, -7], [104, 52, -5, -10], [136, 52, 5, -10], [154, 58, 12, -7]] {
         HWPoly([tf[1] - 10, y0 + tf[2] + 14, tf[1] + tf[3], y0 + tf[2] + tf[4], tf[1] + 10, y0 + tf[2] + 14], CompElfHair(0.05 + (tf[1] > 120 ? 0.04 : 0)))
     }
@@ -1218,7 +1168,6 @@ CompDrawElf(t)
         k := A_Index
         NLLineW(120, y0 + 49, 62 + k * 19, y0 + 104 + (k = 1 || k = 6 ? 22 : 0), NLC(140, 190, 244, 120), 1.5)
     }
-    ; long locks in front of the shoulders
     for side in [-1, 1] {
         Loop 13 {
             f := (A_Index - 1) / 12
@@ -1231,7 +1180,6 @@ CompDrawElf(t)
     NLLineW(114, y0 + 36, 121, y0 + 25, CompElfHair(0.3), 3)
     NLLineW(121, y0 + 25, 133, y0 + 27, CompElfHair(0.3), 3)
 
-    ; floating ice sparkles
     Loop 4 {
         k := A_Index
         sx := 120 + 94 * Cos(t * 0.7 + k * 1.6), sy := y0 + 110 + 70 * Sin(t * 0.7 + k * 1.6)
@@ -1241,3 +1189,12 @@ CompDrawElf(t)
     }
 }
 
+LoaderLinks()
+{
+    global REPO := "https://raw.githubusercontent.com/eintoaster/Macros/main/"
+    global LREPO := "https://raw.githubusercontent.com/eintoaster/Destiny-Loader/main/"
+    global GAMES_URL := LREPO "games.txt"
+    global LOADER_API := "https://api.github.com/repos/eintoaster/Destiny-Loader/contents/Loader"
+    global LOADER_RAW := LREPO "Loader"
+    global SrcDir := ""
+}
