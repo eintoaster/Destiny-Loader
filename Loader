@@ -265,11 +265,14 @@ Frame()
 SplashInit()
 {
     global FSplash, FSplashJ, FSplashS, Petals, LW, LH
-    FSplash := NLMakeFont("Segoe UI Black", 44, 0)
+    Critical                                                              ; (the frame timer must not draw half-made petals)
+    list := []
+    Loop 34
+        list.Push({x: Random(0, LW), y: Random(-LH, LH), s: Random(5, 11), sp: Random(28, 70), sw: Random(0, 628) / 100, rot: Random(0, 360), vr: Random(-90, 90)})
+    Petals := list
     FSplashJ := NLMakeFont("Yu Gothic UI", 15, 1)
     FSplashS := NLMakeFont("Segoe UI", 12, 1)
-    Loop 34
-        Petals.Push({x: Random(0, LW), y: Random(-LH, LH), s: Random(5, 11), sp: Random(28, 70), sw: Random(0, 628) / 100, rot: Random(0, 360), vr: Random(-90, 90)})
+    FSplash := NLMakeFont("Segoe UI Black", 44, 0)                        ; (set last: Splash() only skips the setup once this is there)
 }
 
 Petal(x, y, s, rot, argb)
@@ -317,7 +320,9 @@ Splash()
         NLLineW(cx + Cos(a) * r0, cy + Sin(a) * r0, cx + Cos(a) * (r0 + 70), cy + Sin(a) * (r0 + 70), NLC(255, 255, 255, 10), 1.5)
     }
     for p in Petals {
-        y := Mod(p.y + p.sp * t + SH * 4, SH + 30) - 15
+        if (!IsObject(p) || !p.HasOwnProp("rot"))
+            continue
+        y :=Mod(p.y + p.sp * t + SH * 4, SH + 30) - 15
         x := Mod(p.x, SW) + 12 * Sin(t * 1.2 + p.sw)
         Petal(x, y, p.s * 0.7, p.rot + p.vr * t, NLC(255, 182, 213, 160))
     }
