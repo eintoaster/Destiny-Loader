@@ -268,7 +268,7 @@ SplashInit()
     Critical                                                              ; (the frame timer must not draw half-made petals)
     list := []
     Loop 34
-        list.Push({x: Random(0, LW), y: Random(-LH, LH), s: Random(5, 11), sp: Random(28, 70), sw: Random(0, 628) / 100, rot: Random(0, 360), vr: Random(-90, 90)})
+        list.Push([Random(0, LW), Random(-LH, LH), Random(5, 11), Random(28, 70), Random(0, 628) / 100, Random(0, 360), Random(-90, 90)])   ; (x, y, size, speed, sway, turn, spin)
     Petals := list
     FSplashJ := NLMakeFont("Yu Gothic UI", 15, 1)
     FSplashS := NLMakeFont("Segoe UI", 12, 1)
@@ -320,11 +320,13 @@ Splash()
         NLLineW(cx + Cos(a) * r0, cy + Sin(a) * r0, cx + Cos(a) * (r0 + 70), cy + Sin(a) * (r0 + 70), NLC(255, 255, 255, 10), 1.5)
     }
     for p in Petals {
-        if (!IsObject(p) || !p.HasOwnProp("rot"))
-            continue
-        y :=Mod(p.y + p.sp * t + SH * 4, SH + 30) - 15
-        x := Mod(p.x, SW) + 12 * Sin(t * 1.2 + p.sw)
-        Petal(x, y, p.s * 0.7, p.rot + p.vr * t, NLC(255, 182, 213, 160))
+        try {                                                             ; (a broken petal is skipped, it never stops the loader)
+            y := Mod(p[2] + p[4] * t + SH * 4, SH + 30) - 15
+            x := Mod(p[1], SW) + 12 * Sin(t * 1.2 + p[5])
+            Petal(x, y, p[3] * 0.7, p[6] + p[7] * t, NLC(255, 182, 213, 160))
+        } catch {
+            DllCall("gdiplus\GdipResetWorldTransform", "Ptr", NLG)
+        }
     }
     Loop 9 {
         k := A_Index
