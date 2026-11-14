@@ -21,10 +21,22 @@ try Dark := IniRead(PrefFile, "loader", "dark", "1") = "1"
 
 LoaderLinks()
 
-Global GAMES := [{name: "Evade", sub: "M0MENT4M Movement Macro", url: REPO "M0MENT4M"}
-    , {name: "The Strongest Battlegrounds", sub: "Destiny TSB 1.0 (BETA)", url: REPO "Destiny%20Tsb"}]
+Global AUR := [[16, 185, 129], [34, 211, 238], [99, 102, 241], [168, 85, 247]]
+Global COSMIC := [[217, 70, 239], [124, 58, 237], [168, 85, 247], [99, 102, 241]]
+; the color themes a game can use (4th field in games.txt): one of these names, or its own colors as hex like D946EF-7C3AED
+Global THEMES := Map("aurora", AUR, "cosmic", COSMIC
+    , "ember", [[249, 115, 22], [239, 68, 68], [251, 191, 36]], "crimson", [[244, 63, 94], [190, 18, 60], [251, 113, 133]]
+    , "violet", [[139, 92, 246], [99, 102, 241], [192, 132, 252]], "ocean", [[56, 189, 248], [37, 99, 235], [34, 211, 238]]
+    , "mint", [[52, 211, 153], [20, 184, 166], [163, 230, 53]], "gold", [[251, 191, 36], [245, 158, 11], [253, 224, 71]])
+; games.txt: name|subtitle|raw link|theme|version|tag (the last three are optional)
+Global GAMES := [MakeGame("Evade", "M0MENT4M Movement Macro", REPO "M0MENT4M", "aurora", "2.2")
+    , MakeGame("The Strongest Battlegrounds", "Destiny TSB Macro", REPO "Destiny%20Tsb", "cosmic", "1.2", "beta")]
 Global LastGame := ""
-Global Changelog := "M0MENT4M 2.2 Update! · TSB Update v1 Beta"
+Global Changelog := "M0MENT4M 2.2 Update! · TSB Update v1.2 Beta"
+Global News := []                      ; (the changelog popup's lines: "news|..." in games.txt)
+Global ClOpen := false                 ; (the changelog popup is open)
+Global DL := {on: false, p: 0}         ; (the macro download: p 0..1 for the launch button's bar, -1 = size not known)
+Global HttpLast := 0                   ; (the HTTP status of the last download, 0 = no answer: for the error text)
 Global SplashOn := true, SplashT0 := A_TickCount, SPLASH_MS := 3200, SplashEnd := 0
 Global SelT := 0
 Global Sel := 1, StatusTxt := "", StatusCol := 0, BtnTxt := "launch", Busy := false
@@ -32,10 +44,54 @@ Global Upd := {loader: 0, games: 0, state: "", until: 0, updated: false}
 
 Global LW := 820, LH := 520, ElfX := 40, ElfY := 66, ElfS := 1.12
 Global LG, LDC := 0, LBmp := 0, Hits := [], HitsNext := [], HoverId := "", Anim := Map(), T0 := A_TickCount, ThemeT := 1.0
-Global AUR := [[16, 185, 129], [34, 211, 238], [99, 102, 241], [168, 85, 247]]
-Global COSMIC := [[217, 70, 239], [124, 58, 237], [168, 85, 247], [99, 102, 241]]
 
-GameStops(gm) => (InStr(gm.name, "Strongest Battlegrounds") || InStr(gm.name, "TSB")) ? COSMIC : AUR
+GameStops(gm) => gm.HasOwnProp("theme") && THEMES.Has(gm.theme) ? THEMES[gm.theme] : AUR
+
+MakeGame(name, sub, url, theme := "", ver := "", tag := "") => {name: name, sub: sub, url: url, theme: ThemeKey(theme, name), ver: ver, tag: tag}
+
+; a theme name from games.txt -> its key in THEMES (hex colors are added as a new theme; nothing given: TSB is cosmic, the rest aurora)
+ThemeKey(spec, name := "")
+{
+    global THEMES
+    k := StrLower(Trim(spec))
+    if (k != "" && THEMES.Has(k))
+        return k
+    if (RegExMatch(k, "^#?[0-9a-f]{6}([-,;]#?[0-9a-f]{6})*$")) {
+        st := []
+        Loop Parse, k, "-,;" {
+            v := Integer("0x" LTrim(A_LoopField, "#"))
+            st.Push([v >> 16, (v >> 8) & 255, v & 255])
+        }
+        THEMES[k] := st
+        return k
+    }
+    return (InStr(name, "Strongest Battlegrounds") || InStr(name, "TSB")) ? "cosmic" : "aurora"
+}
+
+; the window's own colors: the picked game's theme, blended over from the last one when another game is picked
+UiStops()
+{
+    global GAMES, Sel, THEMES
+    static fr := "", tgt := "", at := 0, mix := Map()
+    cur := GAMES[Sel].HasOwnProp("theme") && THEMES.Has(GAMES[Sel].theme) ? GAMES[Sel].theme : "aurora"
+    if (tgt = "")
+        fr := cur, tgt := cur
+    if (cur != tgt)
+        fr := tgt, tgt := cur, at := A_TickCount
+    k := Min(10, (A_TickCount - at) // 35)
+    if (k >= 10 || fr = tgt)
+        return THEMES[tgt]
+    key := fr "|" tgt "|" k
+    if (!mix.Has(key)) {
+        a := THEMES[fr], b := THEMES[tgt], f := k / 10, st := []
+        Loop 4 {
+            c1 := SPStopsSample(a, (A_Index - 1) / 4), c2 := SPStopsSample(b, (A_Index - 1) / 4)
+            st.Push([Round(c1[1] + (c2[1] - c1[1]) * f), Round(c1[2] + (c2[2] - c1[2]) * f), Round(c1[3] + (c2[3] - c1[3]) * f)])
+        }
+        mix[key] := st
+    }
+    return mix[key]
+}
 Global QuickLaunch := false
 Global FSplash := 0, FSplashJ := 0, FSplashS := 0, Petals := []
 
@@ -179,7 +235,8 @@ Frame()
     DllCall("gdiplus\GdipGraphicsClear", "Ptr", NLG, "UInt", 0)
     NLRR(0, 0, LW, LH, 22, P("bg"))
     NLRRLine(0, 0, LW, LH, 22, P("edge"))
-    gc := SPStopsSample(AUR, t * 0.05)
+    UI := UiStops()                                                       ; (the picked game's colors, for the whole window)
+    gc := SPStopsSample(UI, t * 0.05)
     Loop 6
         NLDisc(ElfX + 135, ElfY + 250, 190 - A_Index * 22, NLC(gc[1], gc[2], gc[3], Dark ? 7 : 9))
     DllCall("gdiplus\GdipTranslateWorldTransform", "Ptr", NLG, "Float", ElfX, "Float", ElfY, "Int", 0)
@@ -188,7 +245,7 @@ Frame()
     DllCall("gdiplus\GdipResetWorldTransform", "Ptr", NLG)
     x := 28
     Loop Parse, "DESTINY" {
-        c := SPStopsSample(AUR, t * 0.18 - (A_Index - 1) * 0.07)
+        c := SPStopsSample(UI, t * 0.18 - (A_Index - 1) * 0.07)
         NLText(A_LoopField, x, 18, NLC(c[1], c[2], c[3]), FTitle, 40, 34, 0, 1)
         x += NLTextW(A_LoopField, FTitle) * 0.72 + 1
     }
@@ -209,10 +266,13 @@ Frame()
         cpw := clw + ctw + 38, cpx := rx + rw - cpw, cpy := 64 + (1 - e) * 8
         NLRR(cpx, cpy, cpw, 26, 13, P("card"))
         NLRRLine(cpx, cpy, cpw, 26, 13, P("line"))
-        cc := SPStopsSample(AUR, t * 0.2)
+        hp := Lerp("clp", HoverId = "clog" ? 1 : 0, 0.25)                  ; (click: the full changelog opens)
+        NLRR(cpx, cpy, cpw, 26, 13, P("text", Round(16 * hp)))
+        cc := SPStopsSample(UI, t * 0.2)
         NLDisc(cpx + 14, cpy + 13, 3.4 + 0.7 * Sin(t * 3), NLC(cc[1], cc[2], cc[3]))
         NLText("changelog:", cpx + 24, cpy, P("muted"), FSmall, clw + 4, 26, 0, 1)
         NLText(Changelog, cpx + 28 + clw, cpy, P("text"), FSmall, ctw + 4, 26, 0, 1)
+        AddHit("clog", cpx, cpy, cpw, 26)
     }
     NLText("welcome back", rx, 108 + (1 - e) * 14, P("text"), FBig, rw, 46, 2, 1)
     NLText("choose your roblox game", rx, 154 + (1 - e) * 10, P("muted"), FTxt, rw, 22, 2, 1)
@@ -228,7 +288,7 @@ Frame()
         NLRR(rx, y, rw, ch, 14, P("card"))
         NLAlphaPage := e * sv
         NLRR(rx, y, rw, ch, 14, P("cardSel"))
-        if (GameStops(gm) = COSMIC && sv > 0.01)
+        if (gm.theme = "cosmic" && sv > 0.01)
             CosmicCard(rx, y, rw, ch, 14, t)
         SPGradBorder(rx, y, rw, ch, 14, GameStops(gm), t * 0.3, 1.6)
         NLAlphaPage := e * (1 - sv) * hg
@@ -238,12 +298,20 @@ Frame()
             NLRR(rx, y, rw, ch, 14, NLC(255, 255, 255, Round(34 * (1 - age / 450))))
         c := SPStopsSample(GameStops(gm), t * 0.2)
         DrawTick(rx + 26, my, sv, on, age, c)
-        if (ch >= 44) {
-            NLText(gm.name, rx + 50, my - 22, P("text"), FMid, rw - 60, 26, 0, 1)
-            NLText(gm.sub, rx + 50, my + 3, P("muted"), FTxt, rw - 60, 20, 0, 1)
-        } else {
+        ver := gm.ver = "" ? "" : (RegExMatch(gm.ver, "^\d") ? "v" : "") gm.ver, tag := StrUpper(gm.tag)
+        if (ch >= 44) {                                                   ; (right side: the tag as a small pill, the version under it)
+            tw := tag = "" ? 0 : NLTextW(tag, FSmall) + 18, vw := ver = "" ? 0 : NLTextW(ver, FSmall) + 10
+            if (tag != "") {
+                NLRR(rx + rw - 14 - tw, my - 20, tw, 18, 9, NLC(c[1], c[2], c[3], 46))
+                NLText(tag, rx + rw - 14 - tw, my - 20, Dark ? NLC(c[1] + (255 - c[1]) // 2, c[2] + (255 - c[2]) // 2, c[3] + (255 - c[3]) // 2) : NLC(c[1] * 2 // 3, c[2] * 2 // 3, c[3] * 2 // 3), FSmall, tw, 18, 1, 1)
+            }
+            if (ver != "")
+                NLText(ver, rx + 50, tag = "" ? my - 10 : my + 3, P("muted"), FSmall, rw - 66, 20, 2, 1)
+            NLText(gm.name, rx + 50, my - 22, P("text"), FMid, rw - 62 - Max(tw, tag = "" ? vw : 0) - 8, 26, 0, 1)
+            NLText(gm.sub, rx + 50, my + 3, P("muted"), FTxt, rw - 62 - (tag = "" ? Max(tw, vw) : vw) - 8, 20, 0, 1)
+        } else {                                                          ; (one line: name left, subtitle + version + tag right)
             NLText(gm.name, rx + 50, my - 13, P("text"), FMid, rw - 60, 26, 0, 1)
-            NLText(gm.sub, rx + 50, my - 10, P("muted"), FTxt, rw - 66, 20, 2, 1)
+            NLText(gm.sub . (ver = "" ? "" : "  ·  " ver) . (tag = "" ? "" : "  ·  " tag), rx + 50, my - 10, P("muted"), FTxt, rw - 66, 20, 2, 1)
         }
         AddHit("g" i, rx, y, rw, ch)
     }
@@ -251,15 +319,87 @@ Frame()
     NLRR(rx, by - 12, rw, 1, 0, P("line"))
     hb := Lerp("bt", HoverId = "go" ? 1 : 0, 0.22)
     pr := (HoverId = "go" && GetKeyState("LButton", "P")) ? 2 : 0
-    SPGradFill(rx, by + pr, rw, 50, 25, GameStops(GAMES[Sel]), t * 0.25, 1.0)
-    NLRR(rx, by + pr, rw, 50, 25, NLC(255, 255, 255, Round(40 * hb)))
-    NLText(BtnTxt, rx, by + pr, NLC(255, 255, 255), FBtn, rw, 50, 1, 1)
+    if (DL.on) {                                                          ; (downloading: the button is a progress bar that fills up)
+        dp := DL.p < 0 ? 0 : Max(0.0, Min(1.0, Lerp("dl", DL.p, 0.2)))
+        NLRR(rx, by, rw, 50, 25, P("card"))
+        NLRRLine(rx, by, rw, 50, 25, P("line"))
+        lbl := BtnTxt . (BtnTxt != "downloading" ? "" : DL.p < 0 ? "..." : " " Round(dp * 100) "%")
+        if (DL.p < 0) {                                                   ; (size not known: the whole bar breathes)
+            SPGradFill(rx, by, rw, 50, 25, UI, t * 0.25, 0.35 + 0.3 * Sin(t * 4))
+            NLText(lbl, rx, by, P("text"), FBtn, rw, 50, 1, 1)
+        } else {
+            DllCall("gdiplus\GdipSetClipRect", "Ptr", NLG, "Float", rx + rw * dp, "Float", by, "Float", rw * (1 - dp) + 1, "Float", 50, "Int", 0)
+            NLText(lbl, rx, by, P("text"), FBtn, rw, 50, 1, 1)
+            DllCall("gdiplus\GdipSetClipRect", "Ptr", NLG, "Float", rx, "Float", by, "Float", rw * dp, "Float", 50, "Int", 0)
+            SPGradFill(rx, by, rw, 50, 25, UI, t * 0.25, 1.0)
+            NLText(lbl, rx, by, NLC(255, 255, 255), FBtn, rw, 50, 1, 1)   ; (white on the filled part, the normal text color on the rest)
+            DllCall("gdiplus\GdipResetClip", "Ptr", NLG)
+        }
+    } else {
+        SPGradFill(rx, by + pr, rw, 50, 25, UI, t * 0.25, 1.0)
+        NLRR(rx, by + pr, rw, 50, 25, NLC(255, 255, 255, Round(40 * hb)))
+        NLText(BtnTxt, rx, by + pr, NLC(255, 255, 255), FBtn, rw, 50, 1, 1)
+    }
     AddHit("go", rx, by, rw, 50)
     if (StatusTxt != "")
         NLText(StatusTxt, rx, by + 60, StatusCol ? StatusCol : P("muted"), FTxt, rw, 40, 1, 0, true)
+    ChangelogPopup(t, UI)
     NLAlphaPage := 1.0
     Hits := HitsNext
     Present(Round(255 * WinA))
+}
+
+; the full changelog, over the menu (opens with a click on the changelog pill, any click closes it)
+ChangelogPopup(t, stops)
+{
+    global LW, LH, NLAlphaPage, ClOpen, News, Changelog, FMid, FTxt, FSmall
+    ca := Lerp("clo", ClOpen ? 1 : 0, 0.22)
+    if (ca < 0.02)
+        return
+    items := News.Length ? News : [Changelog]
+    pw := 400, px := LW - 46 - pw, tw := pw - 64
+    hs := [], total := 0
+    for it in items {
+        h := Max(20, NLTextH(it, FTxt, tw))
+        if (total + h + 8 > LH - 190)                                     ; (only what fits; the newest lines come first in games.txt)
+            break
+        hs.Push(h), total += h + 8
+    }
+    ph := 58 + total + 34, py := (LH - ph) / 2 + (1 - ca) * 12
+    NLAlphaPage := ca
+    NLRR(0, 0, LW, LH, 22, NLC(0, 0, 0, 120))
+    NLRR(px, py, pw, ph, 18, P("bg"))
+    NLRR(px, py, pw, ph, 18, P("card"))
+    SPGradBorder(px, py, pw, ph, 18, stops, t * 0.3, 1.4)
+    NLText("changelog", px + 24, py + 16, P("text"), FMid, pw - 48, 26, 0, 1)
+    SPGradFill(px + 24, py + 46, 44, 3, 1.5, stops, t * 0.25, 1.0)
+    y := py + 58
+    for i, h in hs {
+        c := SPStopsSample(stops, t * 0.2 + i * 0.13)
+        NLDisc(px + 31, y + 10, 3, NLC(c[1], c[2], c[3]))
+        NLText(items[i], px + 44, y, P("text"), FTxt, tw, h + 2, 0, 0, true)
+        y += h + 8
+    }
+    NLText("click anywhere to close", px, py + ph - 28, P("muted"), FSmall, pw, 18, 1, 1)
+    NLAlphaPage := 1.0
+    if (ClOpen)
+        AddHit("clclose", 0, 0, LW, LH)                                   ; (added last: it wins over everything under it)
+}
+
+; how tall a text is when it wraps at width w
+NLTextH(str, font, w)
+{
+    global NLG, NLFmtW
+    static known := Map()
+    key := font "|" w "|" str
+    if (known.Has(key))
+        return known[key]
+    if (known.Count > 500)
+        known.Clear()
+    rc := Buffer(16, 0), out := Buffer(16, 0)
+    NumPut("Float", w, rc, 8), NumPut("Float", 2000, rc, 12)
+    DllCall("gdiplus\GdipMeasureString", "Ptr", NLG, "WStr", str, "Int", -1, "Ptr", font, "Ptr", rc, "Ptr", NLFmtW, "Ptr", out, "Ptr", 0, "Ptr", 0)
+    return known[key] := Ceil(NumGet(out, 12, "Float"))
 }
 
 SplashInit()
@@ -417,7 +557,7 @@ Present(alpha, w := 0, h := 0)
 
 OnDown(wParam, lParam, msg, hwnd)
 {
-    global LG, HoverId, Dark, Sel, GAMES, Busy, Hits, SelT
+    global LG, HoverId, Dark, Sel, GAMES, Busy, Hits, SelT, ClOpen, BtnTxt
     if (hwnd != LG.Hwnd)
         return
     global SplashOn, SplashT0, SPLASH_MS
@@ -444,9 +584,17 @@ OnDown(wParam, lParam, msg, hwnd)
             if (!Busy)
                 SetTimer(() => Launch(GAMES[Sel]), -10)
             return 0
+        case "clog":
+            ClOpen := true
+            return 0
+        case "clclose":
+            ClOpen := false
+            return 0
         default:
             if (SubStr(HoverId, 1, 1) = "g") {
                 Sel := Integer(SubStr(HoverId, 2)), SelT := A_TickCount
+                if (!Busy)                                                ; (another game: a failed download's "retry" and error text go away)
+                    BtnTxt := "launch", Status("")
                 return 0
             }
     }
@@ -475,16 +623,21 @@ QuickStart()
 
 Launch(gm)
 {
-    global BtnTxt, Busy
+    global BtnTxt, Busy, DL, HttpLast, Anim
     Busy := true
-    BtnTxt := "downloading..."
+    BtnTxt := "downloading", DL.p := 0, Anim["dl"] := 0, DL.on := true
     Status("getting the latest version")
     try DirCreate(PrefDir), IniWrite(gm.name, PrefFile, "loader", "game"), IniWrite(gm.url, PrefFile, "loader", "url")
-    code := FreshText(gm.url)
+    code := Download(gm.url)
     if (!InStr(SubStr(code, 1, 200), "#Requires AutoHotkey v2")) {
-        BtnTxt := "launch", Busy := false
-        Status("could not download the macro - check your internet connection", true)
+        DL.on := false, BtnTxt := "retry", Busy := false                  ; (the button stays the way to try again)
+        Status(DlWhy(HttpLast), true)
         return
+    }
+    if (DL.p >= 0) {                                                      ; (the bar runs to the end before the macro starts)
+        DL.p := 1, t0 := A_TickCount
+        while (Anim.Get("dl", 1) < 0.985 && A_TickCount - t0 < 600)
+            Sleep(15)
     }
     BtnTxt := "starting..."
     p := InStr(code, "`n")
@@ -516,23 +669,29 @@ WriteText(path, txt, enc := "UTF-8-RAW")
     fo.Close()
 }
 
-HttpStart(url, accept := "")
+; range: only a piece of the file, like "bytes=0-65535" (for the download with progress)
+HttpStart(url, accept := "", range := "")
 {
     global SrcDir
-    if (SrcDir != "")
-        return {text: FileText(SrcDir "\" StrReplace(RegExReplace(RegExReplace(url, "\?.*"), ".*/"), "%20", " "))}
+    if (SrcDir != "") {
+        txt := FileText(SrcDir "\" StrReplace(RegExReplace(RegExReplace(url, "\?.*"), ".*/"), "%20", " "))
+        return {text: txt, status: txt = "" ? 404 : 200}
+    }
     try {
         req := ComObject("WinHttp.WinHttpRequest.5.1")
         req.SetTimeouts(3000, 3000, 3000, 4000)
         req.Open("GET", url (InStr(url, "?") ? "&" : "?") "t=" A_TickCount, true)
         if (accept != "")
             req.SetRequestHeader("Accept", accept)
+        if (range != "")
+            req.SetRequestHeader("Range", range)
         req.Send()
-        return {req: req}
+        return {req: req, status: 0}
     }
-    return {text: ""}
+    return {text: "", status: 0}
 }
 
+; h.status afterwards: the HTTP status (200 ok, 206 a piece, 403/429 limited, 404 not there, 5xx GitHub's side), 0 = no answer at all
 HttpDone(h, &text)
 {
     text := ""
@@ -543,13 +702,19 @@ HttpDone(h, &text)
     try {
         if (!h.req.WaitForResponse(0))
             return false
-        if (h.req.Status = 200) {
+        h.status := h.req.Status
+        if (h.status = 200 || h.status = 206) {
             body := h.req.ResponseBody
             n := body.MaxIndex() + 1
             buf := Buffer(n)
             pv := NumGet(ComObjValue(body) + 8 + A_PtrSize, "Ptr")
             DllCall("RtlMoveMemory", "Ptr", buf, "Ptr", pv, "UPtr", n)
-            text := StrGet(buf, n, "UTF-8")
+            h.buf := buf
+            if (h.status = 206) {
+                try h.range := h.req.GetResponseHeader("Content-Range")   ; ("bytes 0-65535/250730": the last number is the whole size)
+            } else if (n) {
+                text := StrGet(buf, n, "UTF-8")
+            }
         }
     }
     text := LTrim(text, Chr(0xFEFF))
@@ -559,26 +724,102 @@ HttpDone(h, &text)
 
 HttpGetText(url, accept := "")
 {
+    global HttpLast
     h := HttpStart(url, accept)
     while (!HttpDone(h, &text))
         Sleep(30)
+    HttpLast := h.status
     return text
 }
 
 RawToApi(url) => RegExMatch(url, "i)^https://raw\.githubusercontent\.com/([^/]+)/([^/]+)/(?:refs/heads/)?([^/]+)/(.+)$", &m)
     ? "https://api.github.com/repos/" m[1] "/" m[2] "/contents/" m[4] "?ref=" m[3] : ""
 
+; the raw link first (no request limit); GitHub's API (60 requests an hour) only when the raw link gave nothing
 FreshText(url)
 {
-    if ((api := RawToApi(url)) != "" && (text := HttpGetText(api, "application/vnd.github.raw")) != "")
+    global HttpLast
+    if ((text := HttpGetText(url)) != "")
         return text
-    return HttpGetText(url)
+    st := HttpLast
+    if ((api := RawToApi(url)) = "")
+        return ""
+    text := HttpGetText(api, "application/vnd.github.raw")
+    if (text = "" && st)                                                  ; (both failed: the raw link's reason is the one to show)
+        HttpLast := st
+    return text
+}
+
+; the macro in pieces that load side by side, so the launch button can show real progress (DL.p 0..1)
+Download(url)
+{
+    global DL, HttpLast
+    static CH := 65536
+    DL.p := 0
+    first := HttpStart(url, "", "bytes=0-" (CH - 1))
+    while (!HttpDone(first, &text))
+        Sleep(15)
+    HttpLast := first.status
+    if (first.status = 200 && text != "") {                               ; (the server sent the whole file at once)
+        DL.p := 1
+        return text
+    }
+    if (first.status = 206 && first.HasOwnProp("range") && RegExMatch(first.range, "/(\d+)\s*$", &m) && (total := Integer(m[1])) > 0) {
+        parts := [first]
+        Loop Ceil(total / CH) - 1
+            parts.Push(HttpStart(url, "", "bytes=" (A_Index * CH) "-" (Min(total, (A_Index + 1) * CH) - 1)))
+        Loop {
+            got := 0, waiting := 0
+            for q in parts {
+                if (!HttpDone(q, &piece))
+                    waiting++
+                else if (q.HasOwnProp("buf"))
+                    got += q.buf.Size
+            }
+            DL.p := Min(1.0, got / total)
+            if (!waiting)
+                break
+            Sleep(15)
+        }
+        whole := Buffer(total), off := 0, ok := true
+        for q in parts {
+            want := Min(CH, total - off)
+            if (q.status != 206 || !q.HasOwnProp("buf") || q.buf.Size != want || !q.HasOwnProp("range") || !RegExMatch(q.range, "/" total "\s*$")) {   ; (a piece is missing, or from another version of the file)
+                ok := false, HttpLast := q.status = 206 ? 0 : q.status
+                break
+            }
+            DllCall("RtlMoveMemory", "Ptr", whole.Ptr + off, "Ptr", q.buf, "UPtr", want)
+            off += want
+        }
+        if (ok) {
+            HttpLast := 200
+            return LTrim(StrGet(whole, total, "UTF-8"), Chr(0xFEFF))
+        }
+    }
+    DL.p := -1                                                            ; (no pieces: the plain download, the bar only shows that it is working)
+    return FreshText(url)
+}
+
+; why a download failed, in plain words (st: HttpLast)
+DlWhy(st)
+{
+    if (st = 0)
+        return "no connection to GitHub - check your internet, then click retry"
+    if (st = 403 || st = 429)
+        return "GitHub is limiting downloads right now - wait a few minutes, then click retry"
+    if (st = 404)
+        return "this macro was not found on GitHub - it may have been moved or renamed"
+    if (st >= 500)
+        return "GitHub has problems right now (error " st ") - try again in a few minutes"
+    if (st = 200 || st = 206)
+        return "the download was not a macro file - click retry"
+    return "the download failed (error " st ") - click retry"
 }
 
 LoadGames(txt, pick := "")
 {
-    global GAMES, Sel, Changelog
-    list := [], note := ""
+    global GAMES, Sel, Changelog, News
+    list := [], note := "", more := []
     Loop Parse, txt, "`n", "`r" {
         ln := Trim(A_LoopField)
         if (ln = "" || SubStr(ln, 1, 1) = "#")
@@ -587,13 +828,18 @@ LoadGames(txt, pick := "")
             note := Trim(SubStr(ln, 11))
             continue
         }
+        if (SubStr(ln, 1, 5) = "news|") {                                 ; (one line of the changelog popup)
+            if ((nw := Trim(SubStr(ln, 6))) != "")
+                more.Push(nw)
+            continue
+        }
         f := StrSplit(ln, "|", " `t")
         if (f.Length >= 3 && f[1] != "" && SubStr(f[3], 1, 8) = "https://")
-            list.Push({name: f[1], sub: f[2], url: f[3]})
+            list.Push(MakeGame(f[1], f[2], f[3], f.Length > 3 ? f[4] : "", f.Length > 4 ? f[5] : "", f.Length > 5 ? f[6] : ""))
     }
     if (!list.Length)
         return false
-    Changelog := note
+    Changelog := note, News := more
     cur := pick != "" ? pick : GAMES[Sel].name
     GAMES := list, Sel := 1
     for i, gm in GAMES
@@ -608,13 +854,13 @@ NormCode(code) => RTrim(StrReplace(LTrim(code, Chr(0xFEFF)), "`r"), " `t`n")
 
 UpdStart()
 {
-    global Upd, LOADER_API, GAMES_URL, SPLASH_MS
+    global Upd, LOADER_RAW, GAMES_URL, SPLASH_MS
     pc := A_IsCritical
     Critical                                                              ; (nothing may poll the downloads before both are started)
-    games := HttpStart(RawToApi(GAMES_URL), "application/vnd.github.raw")
+    games := HttpStart(GAMES_URL)                                         ; (the raw links first: GitHub's API only allows 60 requests an hour)
     loader := 0
     if (!Upd.updated && !(FileExist(A_ScriptDir "\debug.on") && SrcDir = ""))
-        loader := HttpStart(LOADER_API, "application/vnd.github.raw")
+        loader := HttpStart(LOADER_RAW)
     Upd.games := games, Upd.graw := false, Upd.loader := loader, Upd.raw := false
     Upd.until := A_TickCount + SPLASH_MS + 2500, Upd.state := "check"     ; (set last: UpdPoll only looks once everything is there)
     Critical(pc ? "On" : "Off")
@@ -622,7 +868,7 @@ UpdStart()
 
 UpdPoll()
 {
-    global Upd, LastGame, LOADER_RAW
+    global Upd, LastGame, LOADER_API, GAMES_URL
     if (Upd.state = "apply") {
         if (A_TickCount >= Upd.until)
             ApplyUpdate()
@@ -632,14 +878,14 @@ UpdPoll()
         return
     if (IsObject(Upd.games) && HttpDone(Upd.games, &gt)) {
         Upd.games := 0
-        if (!LoadGames(gt) && !Upd.graw)
-            Upd.graw := true, Upd.games := HttpStart(GAMES_URL)
+        if (!LoadGames(gt) && !Upd.graw)                                   ; (the raw link gave nothing: GitHub's API as the backup)
+            Upd.graw := true, Upd.games := HttpStart(RawToApi(GAMES_URL), "application/vnd.github.raw")
     }
     if (IsObject(Upd.loader) && HttpDone(Upd.loader, &lt)) {
         Upd.loader := 0
         if (!IsLoader(lt) && !Upd.raw) {
             Upd.raw := true
-            Upd.loader := HttpStart(LOADER_RAW)
+            Upd.loader := HttpStart(LOADER_API, "application/vnd.github.raw")
         } else if (IsLoader(lt) && NormCode(lt) != NormCode(FileText(A_ScriptFullPath))) {
             Upd.state := "apply", Upd.code := lt, Upd.until := A_TickCount + 900
             return
