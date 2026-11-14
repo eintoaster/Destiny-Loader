@@ -37,6 +37,7 @@ Global News := []                      ; (the changelog popup's lines: "news|...
 Global ClOpen := false                 ; (the changelog popup is open)
 Global DL := {on: false, p: 0}         ; (the macro download: p 0..1 for the launch button's bar, -1 = size not known)
 Global HttpLast := 0                   ; (the HTTP status of the last download, 0 = no answer: for the error text)
+Global HttpNote := ""                  ; (what exactly failed in the last macro download, shown in brackets after the error)
 Global SplashOn := true, SplashT0 := A_TickCount, SPLASH_MS := 3200, SplashEnd := 0
 Global SelT := 0
 Global Sel := 1, StatusTxt := "", StatusCol := 0, BtnTxt := "launch", Busy := false
@@ -323,7 +324,7 @@ Frame()
         dp := DL.p < 0 ? 0 : Max(0.0, Min(1.0, Lerp("dl", DL.p, 0.2)))
         NLRR(rx, by, rw, 50, 25, P("card"))
         NLRRLine(rx, by, rw, 50, 25, P("line"))
-        lbl := BtnTxt . (BtnTxt != "downloading" ? "" : DL.p < 0 ? "..." : " " Round(dp * 100) "%")
+        lbl := BtnTxt . (BtnTxt != "loading" ? "" : DL.p < 0 ? "..." : " " Round(dp * 100) "%")
         if (DL.p < 0) {                                                   ; (size not known: the whole bar breathes)
             SPGradFill(rx, by, rw, 50, 25, UI, t * 0.25, 0.35 + 0.3 * Sin(t * 4))
             NLText(lbl, rx, by, P("text"), FBtn, rw, 50, 1, 1)
@@ -342,7 +343,7 @@ Frame()
     }
     AddHit("go", rx, by, rw, 50)
     if (StatusTxt != "")
-        NLText(StatusTxt, rx, by + 60, StatusCol ? StatusCol : P("muted"), FTxt, rw, 40, 1, 0, true)
+        NLText(StatusTxt, rx, by + 60, StatusCol ? StatusCol : P("muted"), FTxt, rw, 60, 1, 0, true)
     ChangelogPopup(t, UI)
     NLAlphaPage := 1.0
     Hits := HitsNext
@@ -625,13 +626,13 @@ Launch(gm)
 {
     global BtnTxt, Busy, DL, HttpLast, Anim
     Busy := true
-    BtnTxt := "downloading", DL.p := 0, Anim["dl"] := 0, DL.on := true
+    BtnTxt := "loading", DL.p := 0, Anim["dl"] := 0, DL.on := true
     Status("getting the latest version")
     try DirCreate(PrefDir), IniWrite(gm.name, PrefFile, "loader", "game"), IniWrite(gm.url, PrefFile, "loader", "url")
     code := Download(gm.url)
     if (!InStr(SubStr(code, 1, 200), "#Requires AutoHotkey v2")) {
         DL.on := false, BtnTxt := "retry", Busy := false                  ; (the button stays the way to try again)
-        Status(DlWhy(HttpLast), true)
+        Status(DlWhy(HttpLast) (HttpNote != "" ? "  [" HttpNote "]" : ""), true)   ; (in brackets: what exactly failed, for finding the cause)
         return
     }
     if (DL.p >= 0) {                                                      ; (the bar runs to the end before the macro starts)
@@ -670,7 +671,8 @@ WriteText(path, txt, enc := "UTF-8-RAW")
 }
 
 ; range: only a piece of the file, like "bytes=0-65535" (for the download with progress)
-HttpStart(url, accept := "", range := "")
+; recv: how long (ms) the answer may take to arrive; stamp: the "?t=" that keeps caches from serving an old copy (pieces of one file share one)
+HttpStart(url, accept := "", range := "", recv := 4000, stamp := "")
 {
     global SrcDir
     if (SrcDir != "") {
@@ -679,8 +681,8 @@ HttpStart(url, accept := "", range := "")
     }
     try {
         req := ComObject("WinHttp.WinHttpRequest.5.1")
-        req.SetTimeouts(3000, 3000, 3000, 4000)
-        req.Open("GET", url (InStr(url, "?") ? "&" : "?") "t=" A_TickCount, true)
+        req.SetTimeouts(3000, 3000, 3000, recv)
+        req.Open("GET", url (InStr(url, "?") ? "&" : "?") "t=" (stamp != "" ? stamp : A_TickCount), true)
         if (accept != "")
             req.SetRequestHeader("Accept", accept)
         if (range != "")
@@ -691,7 +693,8 @@ HttpStart(url, accept := "", range := "")
     return {text: "", status: 0}
 }
 
-; h.status afterwards: the HTTP status (200 ok, 206 a piece, 403/429 limited, 404 not there, 5xx GitHub's side), 0 = no answer at all
+; h.status afterwards: the HTTP status (200 ok, 206 a piece, 403/429 limited, 404 not there, 5xx GitHub's side),
+; 0 = no answer at all, -1 = an answer came but the file itself was cut off
 HttpDone(h, &text)
 {
     text := ""
@@ -699,6 +702,7 @@ HttpDone(h, &text)
         text := h.text
         return true
     }
+    whole := false
     try {
         if (!h.req.WaitForResponse(0))
             return false
@@ -716,16 +720,19 @@ HttpDone(h, &text)
                 text := StrGet(buf, n, "UTF-8")
             }
         }
+        whole := true
     }
+    if (!whole && (h.status = 200 || h.status = 206))                     ; (the status came, the body did not)
+        h.status := -1
     text := LTrim(text, Chr(0xFEFF))
     h.text := text
     return true
 }
 
-HttpGetText(url, accept := "")
+HttpGetText(url, accept := "", recv := 4000)
 {
     global HttpLast
-    h := HttpStart(url, accept)
+    h := HttpStart(url, accept, "", recv)
     while (!HttpDone(h, &text))
         Sleep(30)
     HttpLast := h.status
@@ -736,27 +743,31 @@ RawToApi(url) => RegExMatch(url, "i)^https://raw\.githubusercontent\.com/([^/]+)
     ? "https://api.github.com/repos/" m[1] "/" m[2] "/contents/" m[4] "?ref=" m[3] : ""
 
 ; the raw link first (no request limit); GitHub's API (60 requests an hour) only when the raw link gave nothing
-FreshText(url)
+FreshText(url, recv := 4000)
 {
-    global HttpLast
-    if ((text := HttpGetText(url)) != "")
+    global HttpLast, HttpNote
+    if ((text := HttpGetText(url, "", recv)) != "")
         return text
     st := HttpLast
+    HttpNote .= (HttpNote = "" ? "" : ", ") "raw " st
     if ((api := RawToApi(url)) = "")
         return ""
-    text := HttpGetText(api, "application/vnd.github.raw")
-    if (text = "" && st)                                                  ; (both failed: the raw link's reason is the one to show)
+    text := HttpGetText(api, "application/vnd.github.raw", recv)
+    if (text = "") {                                                      ; (both failed: the raw link's reason is the one to show)
+        HttpNote .= ", api " HttpLast
         HttpLast := st
+    }
     return text
 }
 
 ; the macro in pieces that load side by side, so the launch button can show real progress (DL.p 0..1)
 Download(url)
 {
-    global DL, HttpLast
-    static CH := 65536
-    DL.p := 0
-    first := HttpStart(url, "", "bytes=0-" (CH - 1))
+    global DL, HttpLast, HttpNote
+    sz := 65536, stamp := A_TickCount                                     ; (one stamp for all pieces: they come from the same copy of the file)
+    piece := (i, of) => HttpStart(url, "", "bytes=" ((i - 1) * sz) "-" (Min(of, i * sz) - 1), 15000, stamp)
+    DL.p := 0, HttpNote := ""
+    first := piece(1, sz)
     while (!HttpDone(first, &text))
         Sleep(15)
     HttpLast := first.status
@@ -765,55 +776,64 @@ Download(url)
         return text
     }
     if (first.status = 206 && first.HasOwnProp("range") && RegExMatch(first.range, "/(\d+)\s*$", &m) && (total := Integer(m[1])) > 0) {
-        parts := [first]
-        Loop Ceil(total / CH) - 1
-            parts.Push(HttpStart(url, "", "bytes=" (A_Index * CH) "-" (Min(total, (A_Index + 1) * CH) - 1)))
-        Loop {
-            got := 0, waiting := 0
-            for q in parts {
-                if (!HttpDone(q, &piece))
-                    waiting++
-                else if (q.HasOwnProp("buf"))
+        n := Ceil(total / sz), parts := [first], tries := Map(), nxt := 2, bad := 0
+        Loop n - 1
+            parts.Push(0)
+        Loop {                                                            ; (4 pieces at a time; a piece that fails is asked for again, twice at most)
+            got := 0, active := 0
+            for i, q in parts {
+                if (!IsObject(q))
+                    continue
+                if (!HttpDone(q, &part)) {
+                    active++
+                    continue
+                }
+                if (q.status = 206 && q.HasOwnProp("buf") && q.buf.Size = Min(sz, total - (i - 1) * sz) && q.HasOwnProp("range") && RegExMatch(q.range, "/" total "\s*$"))
                     got += q.buf.Size
+                else if (tries.Get(i, 0) < 2)
+                    tries[i] := tries.Get(i, 0) + 1, parts[i] := piece(i, total), active++
+                else
+                    bad := i
             }
+            if (bad)
+                break
+            while (active < 4 && nxt <= n)
+                parts[nxt] := piece(nxt, total), nxt++, active++
             DL.p := Min(1.0, got / total)
-            if (!waiting)
+            if (!active)
                 break
             Sleep(15)
         }
-        whole := Buffer(total), off := 0, ok := true
-        for q in parts {
-            want := Min(CH, total - off)
-            if (q.status != 206 || !q.HasOwnProp("buf") || q.buf.Size != want || !q.HasOwnProp("range") || !RegExMatch(q.range, "/" total "\s*$")) {   ; (a piece is missing, or from another version of the file)
-                ok := false, HttpLast := q.status = 206 ? 0 : q.status
-                break
-            }
-            DllCall("RtlMoveMemory", "Ptr", whole.Ptr + off, "Ptr", q.buf, "UPtr", want)
-            off += want
-        }
-        if (ok) {
+        if (!bad) {
+            all := Buffer(total)
+            for i, q in parts
+                DllCall("RtlMoveMemory", "Ptr", all.Ptr + (i - 1) * sz, "Ptr", q.buf, "UPtr", q.buf.Size)
             HttpLast := 200
-            return LTrim(StrGet(whole, total, "UTF-8"), Chr(0xFEFF))
+            return LTrim(StrGet(all, total, "UTF-8"), Chr(0xFEFF))
         }
-    }
+        HttpNote := "piece " bad "/" n " " parts[bad].status
+    } else
+        HttpNote := "first " first.status
     DL.p := -1                                                            ; (no pieces: the plain download, the bar only shows that it is working)
-    return FreshText(url)
+    return FreshText(url, 20000)
 }
 
-; why a download failed, in plain words (st: HttpLast)
+; why loading a macro failed, in plain words (st: HttpLast)
 DlWhy(st)
 {
     if (st = 0)
         return "no connection to GitHub - check your internet, then click retry"
+    if (st = -1)
+        return "loading was cut off - your connection may be slow or unstable, click retry"
     if (st = 403 || st = 429)
-        return "GitHub is limiting downloads right now - wait a few minutes, then click retry"
+        return "GitHub is limiting requests right now - wait a few minutes, then click retry"
     if (st = 404)
         return "this macro was not found on GitHub - it may have been moved or renamed"
     if (st >= 500)
         return "GitHub has problems right now (error " st ") - try again in a few minutes"
     if (st = 200 || st = 206)
-        return "the download was not a macro file - click retry"
-    return "the download failed (error " st ") - click retry"
+        return "what GitHub sent was not a macro file - click retry"
+    return "loading failed (error " st ") - click retry"
 }
 
 LoadGames(txt, pick := "")
