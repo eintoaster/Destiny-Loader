@@ -1,4 +1,7 @@
-# Destiny loader - one game per line: name|subtitle|raw link
 changelog|M0MENT4M 2.2 Update! · TSB Update v1.2 Beta
-Evade|M0MENT4M Movement Macro|https://raw.githubusercontent.com/eintoaster/Macros/main/M0MENT4M
-The Strongest Battlegrounds|Destiny TSB 1.0 (BETA)|https://raw.githubusercontent.com/eintoaster/Macros/main/Destiny%20Tsb
+news|TSB Update v1.2 Beta
+news|M0MENT4M 2.2 Update!
+news|Loader: each game has its own colors, version and tag
+news|Loader: the launch button shows the download progress
+Evade|M0MENT4M Movement Macro|https://raw.githubusercontent.com/eintoaster/Macros/main/M0MENT4M|aurora|2.2
+The Strongest Battlegrounds|Destiny TSB Macro|https://raw.githubusercontent.com/eintoaster/Macros/main/Destiny%20Tsb|cosmic|1.2|beta
