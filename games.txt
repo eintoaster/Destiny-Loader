@@ -1,5 +1,5 @@
 changelog|M0MENT4M 2.2 Update! · TSB Update v1.2 Beta
-news|TSB Update v1.2 Beta|gold
+news|TSB Update v1.2 Beta
 news|M0MENT4M 2.2 Update!
 news|Loader: each game has its own colors, version and tag
 news|Loader: the launch button shows the download progress
