@@ -629,10 +629,10 @@ Launch(gm)
     BtnTxt := "loading", DL.p := 0, Anim["dl"] := 0, DL.on := true
     Status("getting the latest version")
     try DirCreate(PrefDir), IniWrite(gm.name, PrefFile, "loader", "game"), IniWrite(gm.url, PrefFile, "loader", "url")
-    code := Download(gm.url)
-    if (!InStr(SubStr(code, 1, 200), "#Requires AutoHotkey v2")) {
+    code := LoadMacro(gm.url)
+    if (!IsMacro(code)) {
         DL.on := false, BtnTxt := "retry", Busy := false                  ; (the button stays the way to try again)
-        Status(DlWhy(HttpLast) (HttpNote != "" ? "  [" HttpNote "]" : ""), true)   ; (in brackets: what exactly failed, for finding the cause)
+        Status(DlWhy(HttpLast) . (HttpNote != "" ? "  [" HttpNote "]" : ""), true)   ; (in brackets: what exactly failed, for finding the cause)
         return
     }
     if (DL.p >= 0) {                                                      ; (the bar runs to the end before the macro starts)
@@ -761,7 +761,7 @@ FreshText(url, recv := 4000)
 }
 
 ; the macro in pieces that load side by side, so the launch button can show real progress (DL.p 0..1)
-Download(url)
+LoadMacro(url)
 {
     global DL, HttpLast, HttpNote
     sz := 65536, stamp := A_TickCount                                     ; (one stamp for all pieces: they come from the same copy of the file)
@@ -808,32 +808,48 @@ Download(url)
             all := Buffer(total)
             for i, q in parts
                 DllCall("RtlMoveMemory", "Ptr", all.Ptr + (i - 1) * sz, "Ptr", q.buf, "UPtr", q.buf.Size)
-            HttpLast := 200
-            return LTrim(StrGet(all, total, "UTF-8"), Chr(0xFEFF))
-        }
-        HttpNote := "piece " bad "/" n " " parts[bad].status
+            text := LTrim(StrGet(all, total, "UTF-8"), Chr(0xFEFF))
+            if (IsMacro(text)) {
+                HttpLast := 200
+                return text
+            }
+            HttpNote := "pieces " n " " NoteHead(text)                    ; (all pieces came, but together they are not the macro)
+        } else
+            HttpNote := "piece " bad "/" n " " parts[bad].status
     } else
         HttpNote := "first " first.status
     DL.p := -1                                                            ; (no pieces: the plain download, the bar only shows that it is working)
-    return FreshText(url, 20000)
+    text := HttpGetText(url, "", 20000)                                   ; (the whole file from the raw link, then from the API)
+    if (IsMacro(text))
+        return text
+    st := HttpLast, HttpNote .= ", raw " st " " NoteHead(text)
+    if ((api := RawToApi(url)) != "") {
+        text := HttpGetText(api, "application/vnd.github.raw", 20000)
+        if (IsMacro(text))
+            return text
+        HttpNote .= ", api " HttpLast " " NoteHead(text)
+    }
+    HttpLast := st
+    return ""
 }
+
+IsMacro(code) => InStr(SubStr(code, 1, 200), "#Requires AutoHotkey v2") > 0
+
+; the first few letters of what arrived (for the note in brackets after an error)
+NoteHead(text) => text = "" ? "empty" : StrLen(text) ":" RegExReplace(SubStr(text, 1, 14), "[^\w#<!. ]", "?")
 
 ; why loading a macro failed, in plain words (st: HttpLast)
 DlWhy(st)
 {
     if (st = 0)
-        return "no connection to GitHub - check your internet, then click retry"
+        return "no connection - check your internet, then click retry"
     if (st = -1)
-        return "loading was cut off - your connection may be slow or unstable, click retry"
+        return "loading was cut off - click retry"
     if (st = 403 || st = 429)
-        return "GitHub is limiting requests right now - wait a few minutes, then click retry"
+        return "the server is busy right now - wait a few seconds, then click retry"
     if (st = 404)
-        return "this macro was not found on GitHub - it may have been moved or renamed"
-    if (st >= 500)
-        return "GitHub has problems right now (error " st ") - try again in a few minutes"
-    if (st = 200 || st = 206)
-        return "what GitHub sent was not a macro file - click retry"
-    return "loading failed (error " st ") - click retry"
+        return "this macro was not found on the server"
+    return "server issues - click retry"
 }
 
 LoadGames(txt, pick := "")
