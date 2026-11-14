@@ -715,7 +715,9 @@ Quit(*)
     ExitApp
 }
 
+#HotIf WinActive("ahk_id " LG.Hwnd)    ; (only while the loader is the active window: Esc in the game or a browser is left alone)
 Esc::Quit()
+#HotIf
 
 NLMakeFont(name, px, style)
 {
