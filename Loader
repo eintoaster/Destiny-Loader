@@ -62,7 +62,6 @@ CompGui := EyeHost()
 Global WinA := 0
 LG.Show("NA")
 WinActivate("ahk_id " LG.Hwnd)
-SetTimer(Frame, 16)
 OnMessage(0x0201, OnDown)
 for a in A_Args {
     if (a = "/launch")
@@ -80,6 +79,7 @@ if (QuickLaunch) {
     SetTimer(QuickStart, -50)
 } else
     UpdStart()
+SetTimer(Frame, 16)                    ; (started last: a frame that polls the downloads while they are still being started freezes the loader)
 
 NLGdipInit()
 {
@@ -265,7 +265,6 @@ Frame()
 SplashInit()
 {
     global FSplash, FSplashJ, FSplashS, Petals, LW, LH
-    Critical                                                              ; (the frame timer must not draw half-made petals)
     list := []
     Loop 34
         list.Push([Random(0, LW), Random(-LH, LH), Random(5, 11), Random(28, 70), Random(0, 628) / 100, Random(0, 360), Random(-90, 90)])   ; (x, y, size, speed, sway, turn, spin)
@@ -610,12 +609,15 @@ NormCode(code) => RTrim(StrReplace(LTrim(code, Chr(0xFEFF)), "`r"), " `t`n")
 UpdStart()
 {
     global Upd, LOADER_API, GAMES_URL, SPLASH_MS
-    Upd.state := "check", Upd.until := A_TickCount + SPLASH_MS + 2500
-    Upd.games := HttpStart(RawToApi(GAMES_URL), "application/vnd.github.raw"), Upd.graw := false
-    Upd.loader := Upd.updated ? 0 : HttpStart(LOADER_API, "application/vnd.github.raw")
-    Upd.raw := false
-    if (FileExist(A_ScriptDir "\debug.on") && SrcDir = "")
-        Upd.loader := 0
+    pc := A_IsCritical
+    Critical                                                              ; (nothing may poll the downloads before both are started)
+    games := HttpStart(RawToApi(GAMES_URL), "application/vnd.github.raw")
+    loader := 0
+    if (!Upd.updated && !(FileExist(A_ScriptDir "\debug.on") && SrcDir = ""))
+        loader := HttpStart(LOADER_API, "application/vnd.github.raw")
+    Upd.games := games, Upd.graw := false, Upd.loader := loader, Upd.raw := false
+    Upd.until := A_TickCount + SPLASH_MS + 2500, Upd.state := "check"     ; (set last: UpdPoll only looks once everything is there)
+    Critical(pc ? "On" : "Off")
 }
 
 UpdPoll()
