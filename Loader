@@ -16,6 +16,17 @@ for old in [AppDir "\Destiny\configs\loader.ini", AppDir "\M0MENT4M\configs\load
         try FileDelete(old)
     }
 }
+; startup log (to find out why the window sometimes never shows): %AppData%\Destiny Loader\start.log
+StartLog(msg) {
+    static t0 := A_TickCount
+    try {
+        DirCreate(PrefDir)
+        if (msg = "start" && FileExist(PrefDir "\start.log") && FileGetSize(PrefDir "\start.log") > 20000)
+            FileDelete(PrefDir "\start.log")
+        FileAppend(FormatTime(, "HH:mm:ss") " +" (A_TickCount - t0) "ms pid " DllCall("GetCurrentProcessId") "  " msg "`n", PrefDir "\start.log", "UTF-8")
+    }
+}
+StartLog("start " A_ScriptFullPath " " (A_Args.Length ? A_Args[1] : ""))
 Global Dark := true
 try Dark := IniRead(PrefFile, "loader", "dark", "1") = "1"
 
@@ -40,6 +51,7 @@ Global QuickLaunch := false
 Global FSplash := 0, FSplashJ := 0, FSplashS := 0, Petals := []
 
 NLGdipInit()
+StartLog("gdi+ ready, token " NLToken)
 Global FTitle := NLMakeFont("Segoe UI Black", 22, 0)
 Global FBig := NLMakeFont("Segoe UI", 30, 1)
 Global FMid := NLMakeFont("Segoe UI", 17, 1)
@@ -61,7 +73,8 @@ class EyeHost {
 CompGui := EyeHost()
 Global WinA := 0
 LG.Show("NA")
-WinActivate("ahk_id " LG.Hwnd)
+StartLog("window shown, visible " DllCall("IsWindowVisible", "Ptr", LG.Hwnd))
+try WinActivate("ahk_id " LG.Hwnd)
 SetTimer(Frame, 16)
 OnMessage(0x0201, OnDown)
 for a in A_Args {
@@ -80,6 +93,7 @@ if (QuickLaunch) {
     SetTimer(QuickStart, -50)
 } else
     UpdStart()
+StartLog("startup done, waiting for the first frame")
 
 NLGdipInit()
 {
@@ -390,6 +404,12 @@ Splash()
             LG.Move((A_ScreenWidth - LW) // 2, (A_ScreenHeight - LH) // 2, LW, LH)
         }
     }
+    static logged := 0
+    if (logged < 2 && (logged = 0 || WinA >= 1)) {                       ; (the first frame, and the frame where it is fully faded in)
+        logged++
+        LG.GetPos(&lx, &ly, &lw, &lh)
+        StartLog("splash frame " logged ": alpha " Round(255 * WinA) ", at " lx "," ly " " lw "x" lh ", visible " DllCall("IsWindowVisible", "Ptr", LG.Hwnd) ", update " Upd.state)
+    }
     Present(Round(255 * WinA), SW, SH)
 }
 
@@ -663,6 +683,7 @@ ApplyUpdate()
     for a in A_Args
         if (a != "/updated")
             args .= " " Quote(a)
+    StartLog("loader updated from GitHub, restarting")
     Run(Quote(A_AhkPath) " " Quote(A_ScriptFullPath) " /updated" args, A_ScriptDir)
     ExitApp
 }
